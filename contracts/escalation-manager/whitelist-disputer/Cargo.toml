@@ -1,0 +1,32 @@
+[package]
+name = "whitelist-disputer-escalation-manager"
+description = "Escalation manager that restricts disputes to whitelisted accounts"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/user/nest"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.16.0-rust-1.86.0"
+image_digest = "sha256:3220302ebb7036c1942e772810f21edd9381edf9a339983da43487c77fbad488"
+passed_env = []
+container_build_command = [
+    "cargo",
+    "near",
+    "build",
+    "non-reproducible-wasm",
+    "--locked",
+]
+
+[dependencies]
+near-sdk = "5.14"
+hex = "0.4"
+oracle-types = { path = "../../../crates/oracle-types" }
+
+[dev-dependencies]
+near-sdk = { version = "5.14", features = ["unit-testing"] }
+near-workspaces.workspace = true
+tokio = { version = "1.12.0", features = ["full"] }
+serde_json = "1"

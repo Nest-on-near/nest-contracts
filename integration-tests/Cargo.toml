@@ -1,0 +1,17 @@
+[package]
+name = "integration-tests"
+description = "End-to-end integration tests for the Nest Oracle system"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+near-workspaces.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "e2e_dispute_flow"
+path = "tests/e2e_dispute_flow.rs"

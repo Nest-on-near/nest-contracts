@@ -1,0 +1,8 @@
+[package]
+name = "oracle-types"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+near-sdk = { workspace = true, features = ["non-contract-usage"] }
+serde = { workspace = true }

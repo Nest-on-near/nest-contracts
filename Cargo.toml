@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "contracts/optimistic-oracle",
+    "contracts/escalation-manager/base",
+    "contracts/escalation-manager/whitelist-disputer",
+    "contracts/escalation-manager/full-policy",
+    "contracts/examples/basic-assertion",
+    "contracts/dvm/voting-token",
+    "contracts/dvm/finder",
+    "contracts/dvm/store",
+    "contracts/dvm/identifier-whitelist",
+    "contracts/dvm/registry",
+    "contracts/dvm/slashing-library",
+    "contracts/dvm/voting",
+    "crates/oracle-types",
+    "integration-tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/user/nest"
+
+[workspace.dependencies]
+# Near SDK
+near-sdk = "5.14"
+near-contract-standards = "5.14"
+
+# Testing
+near-workspaces = { version = "0.22", features = ["unstable"] }
+tokio = { version = "1.12.0", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Internal crates
+oracle-types = { path = "crates/oracle-types" }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
