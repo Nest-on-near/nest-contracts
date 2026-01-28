@@ -3836,6 +3836,7 @@ version = "0.1.0"
 dependencies = [
  "near-sdk",
  "near-workspaces",
+ "oracle-types",
  "serde_json",
  "tokio",
 ]

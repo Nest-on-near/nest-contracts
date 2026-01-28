@@ -1,6 +1,6 @@
 //! Oracle event definitions following the NEP-297 standard.
 //!
-//! This module defines all events emitted by the Nest Optimistic Oracle.
+//! This module defines all events emitted by the Nest Optimistic Oracle and DVM.
 //! Events are logged in JSON format and can be indexed by off-chain services.
 //!
 //! Reference: https://nomicon.io/Standards/EventsFormat
@@ -12,10 +12,13 @@ use near_sdk::{
     json_types::U128,
 };
 
-use crate::types::Bytes32;
+use crate::types::{Bytes32, CryptoHash};
 
 /// Event standard identifier for Nest oracle events.
-const EVENT_STANDARD: &str = "nest-events";
+const EVENT_STANDARD: &str = "nest-oracle";
+
+/// Event standard identifier for Nest DVM voting events.
+const VOTING_EVENT_STANDARD: &str = "nest-voting";
 
 /// Current version of the event standard.
 const EVENT_STANDARD_VERSION: &str = "1.0.0";
@@ -106,23 +109,103 @@ impl Event<'_> {
     ///
     /// The event is formatted as JSON following NEP-297 and prefixed with "EVENT_JSON:".
     pub fn emit(&self) {
-        emit_event(&self);
+        emit_event(EVENT_STANDARD, &self);
+    }
+}
+
+// ============================================================================
+// DVM Voting Events
+// ============================================================================
+
+/// All events emitted by the Nest DVM Voting contract.
+#[derive(Clone, Serialize)]
+#[serde(crate = "near_sdk::serde")]
+#[serde(tag = "event", content = "data")]
+#[serde(rename_all = "snake_case")]
+pub enum VotingEvent<'a> {
+    /// Emitted when a new price request is created for voting.
+    PriceRequested {
+        /// Unique identifier for this request.
+        request_id: &'a CryptoHash,
+        /// Price identifier (e.g., "YES_OR_NO_QUERY").
+        identifier: &'a str,
+        /// Timestamp associated with the request.
+        timestamp: u64,
+        /// Additional data for the request.
+        ancillary_data: &'a [u8],
+        /// Account that requested the price.
+        requester: &'a AccountId,
+    },
+
+    /// Emitted when a voter commits their vote.
+    VoteCommitted {
+        /// The request being voted on.
+        request_id: &'a CryptoHash,
+        /// The voter's account.
+        voter: &'a AccountId,
+        /// Stake amount committed.
+        stake: &'a U128,
+    },
+
+    /// Emitted when voting transitions from commit to reveal phase.
+    RevealPhaseStarted {
+        /// The request transitioning phases.
+        request_id: &'a CryptoHash,
+        /// Timestamp when reveal phase started.
+        reveal_start_time: u64,
+    },
+
+    /// Emitted when a voter reveals their vote.
+    VoteRevealed {
+        /// The request being voted on.
+        request_id: &'a CryptoHash,
+        /// The voter's account.
+        voter: &'a AccountId,
+        /// The revealed price value.
+        price: i128,
+        /// Stake amount for this vote.
+        stake: &'a U128,
+    },
+
+    /// Emitted when a price request is resolved.
+    PriceResolved {
+        /// The request that was resolved.
+        request_id: &'a CryptoHash,
+        /// The resolved price value.
+        resolved_price: i128,
+        /// Total stake that participated in voting.
+        total_stake: &'a U128,
+    },
+
+    /// Emitted when voting configuration is updated.
+    VotingConfigUpdated {
+        /// New commit phase duration in nanoseconds.
+        commit_phase_duration_ns: u64,
+        /// New reveal phase duration in nanoseconds.
+        reveal_phase_duration_ns: u64,
+    },
+}
+
+impl VotingEvent<'_> {
+    /// Emit this event to the NEAR logs.
+    pub fn emit(&self) {
+        emit_event(VOTING_EVENT_STANDARD, &self);
     }
 }
 
 /// Formats and logs an event following the NEP-297 standard.
 ///
 /// NEP-297 defines a standard format for indexable events on NEAR:
-/// - `standard`: Name of the event standard (e.g., "nest-events")
+/// - `standard`: Name of the event standard (e.g., "nest-oracle")
 /// - `version`: Version of the standard (e.g., "1.0.0")
 /// - `event`: Event type name (e.g., "assertion_made")
 /// - `data`: Array of event data objects
 ///
 /// The output is logged with the "EVENT_JSON:" prefix for indexer detection.
-pub(crate) fn emit_event<T: ?Sized + Serialize>(data: &T) {
+fn emit_event<T: ?Sized + Serialize>(standard: &str, data: &T) {
     let result = json!(data);
     let event_json = json!({
-        "standard": EVENT_STANDARD,
+        "standard": standard,
         "version": EVENT_STANDARD_VERSION,
         "event": result["event"],
         "data": [result["data"]]

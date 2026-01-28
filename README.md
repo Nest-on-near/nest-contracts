@@ -2,87 +2,165 @@
 
 An optimistic oracle implementation for NEAR Protocol, inspired by UMA's Optimistic Oracle V3.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Consumers
+        PM[Prediction Market]
+        DAPP[Other dApps]
+    end
+
+    subgraph Oracle Layer
+        OO[Optimistic Oracle]
+    end
+
+    subgraph Escalation
+        EM_BASE[Base Escalation Manager]
+        EM_WL[Whitelist Disputer]
+        EM_FULL[Full Policy Manager]
+    end
+
+    subgraph DVM[Data Verification Mechanism]
+        VT[Voting Token]
+        FINDER[Finder]
+        STORE[Store]
+        VOTING[Voting]
+        ID_WL[Identifier Whitelist]
+        REG[Registry]
+        SLASH[Slashing Library]
+    end
+
+    PM --> OO
+    DAPP --> OO
+    OO -->|if disputed| EM_BASE
+    EM_BASE --> EM_WL
+    EM_BASE --> EM_FULL
+    EM_WL --> VOTING
+    EM_FULL --> VOTING
+    VOTING --> VT
+    VOTING --> SLASH
+    FINDER --> STORE
+    FINDER --> REG
+    FINDER --> ID_WL
+```
+
+## Dispute Resolution Flow
+
+```mermaid
+sequenceDiagram
+    participant A as Asserter
+    participant O as Oracle
+    participant D as Disputer
+    participant E as Escalation Manager
+    participant V as DVM Voting
+
+    A->>O: Assert claim (with bond)
+    O->>O: Start liveness period
+
+    alt No dispute
+        O->>A: Return bond + reward
+    else Disputed
+        D->>O: Dispute (with matching bond)
+        O->>E: Escalate to DVM
+        E->>V: Request price
+        V->>V: Commit phase (24h)
+        V->>V: Reveal phase (24h)
+        V->>E: Return resolved price
+        E->>O: Settlement callback
+        O->>O: Distribute bonds to winner
+    end
+```
+
+## Contracts
+
+### Core Oracle
+
+**Optimistic Oracle** (`contracts/optimistic-oracle`)
+
+The main entry point for the system. Accepts assertions with bonded stakes, enforces liveness periods during which assertions can be disputed, and settles assertions by distributing bonds to the correct party.
+
+### Escalation Managers
+
+**Base Escalation Manager** (`contracts/escalation-manager/base`)
+
+Abstract base implementation defining the interface for escalation policies. Provides hooks for assertion validation, dispute handling, and price resolution callbacks.
+
+**Whitelist Disputer** (`contracts/escalation-manager/whitelist-disputer`)
+
+Restricts who can dispute assertions to a predefined set of addresses. Useful for controlled environments where only trusted parties should challenge claims.
+
+**Full Policy Manager** (`contracts/escalation-manager/full-policy`)
+
+Comprehensive escalation manager with configurable policies for assertion validation, dispute windows, and bond requirements. Supports blocking certain asserters or claims.
+
+### DVM (Data Verification Mechanism)
+
+**Voting Token** (`contracts/dvm/voting-token`)
+
+NEP-141 fungible token used for governance voting in the DVM. Token holders stake to participate in dispute resolution and earn rewards for voting correctly.
+
+**Finder** (`contracts/dvm/finder`)
+
+Service discovery contract that maps interface names to contract addresses. Enables upgradability without hardcoding addresses throughout the system.
+
+**Store** (`contracts/dvm/store`)
+
+Manages fee collection and distribution for the oracle system. Tracks final fees per currency and handles payouts to voters and the protocol.
+
+**Identifier Whitelist** (`contracts/dvm/identifier-whitelist`)
+
+Maintains the list of approved price identifiers for oracle requests. Prevents arbitrary or malicious identifiers from being submitted to the DVM.
+
+**Registry** (`contracts/dvm/registry`)
+
+Tracks which contracts are authorized to interact with the oracle system. Only registered contracts can submit price requests to the DVM.
+
+**Slashing Library** (`contracts/dvm/slashing-library`)
+
+Calculates penalties for voters who vote against the resolved outcome. Implements configurable slashing rates to incentivize honest voting.
+
+**Voting** (`contracts/dvm/voting`)
+
+Core commit-reveal voting mechanism for dispute resolution. Voters commit hashed votes, then reveal them. Final price is determined by stake-weighted median.
+
+### Examples
+
+**Basic Assertion** (`contracts/examples/basic-assertion`)
+
+Example contract demonstrating integration with the Optimistic Oracle. Shows the pattern for making assertions via `ft_transfer_call` and handling callbacks.
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/)
 - [cargo-near](https://github.com/near/cargo-near) - `cargo install cargo-near`
 - [NEAR CLI](https://near.cli.rs) - `cargo install near-cli-rs`
 
-## How to Build
-
-Build the optimistic oracle contract:
+## Building
 
 ```bash
-cd contracts/optimistic-oracle && cargo near build
+cd contracts/optimistic-oracle && cargo near build non-reproducible-wasm
 ```
 
-## How to Test
+## Testing
 
 ```bash
-cargo test
+cargo test --workspace
 ```
 
-## Testnet Deployment
+## Deployment Order
 
-### 1. Create a testnet account
+1. VotingToken
+2. Finder
+3. Store
+4. IdentifierWhitelist
+5. Registry
+6. SlashingLibrary
+7. Voting
+8. Escalation Manager(s)
+9. Optimistic Oracle
 
-```bash
-near create-account <your-account>.testnet --useFaucet
-```
+## Links
 
-### 2. Deploy the contract
-
-```bash
-near deploy <your-account>.testnet ./target/near/optimistic_oracle/optimistic_oracle.wasm
-```
-
-### 3. Initialize the contract
-
-```bash
-near call <your-account>.testnet new '{"owner": "<your-account>.testnet", "default_currency": "wrap.testnet"}' --accountId <your-account>.testnet
-```
-
-### 4. Whitelist a currency
-
-Before assertions can be made, you need to whitelist at least one currency:
-
-```bash
-near call <your-account>.testnet whitelist_currency '{"currency": "wrap.testnet", "final_fee": "1000000000000000000"}' --accountId <your-account>.testnet
-```
-
-## Contract Methods
-
-### View Methods
-
-- `default_identifier()` - Returns the default identifier (ASSERT_TRUTH)
-- `default_currency()` - Returns the default currency account
-- `default_liveness()` - Returns the default liveness period in nanoseconds
-- `get_assertion(assertion_id)` - Get assertion details
-- `get_minimum_bond(currency)` - Get minimum bond for a currency
-- `get_assertion_result(assertion_id)` - Get the resolution of a settled assertion
-- `is_identifier_supported(identifier)` - Check if an identifier is approved
-- `is_currency_whitelisted(currency)` - Check if a currency is whitelisted
-
-### Admin Methods (owner only)
-
-- `set_admin_properties(...)` - Update default currency, liveness, and burn percentage
-- `whitelist_currency(currency, final_fee)` - Whitelist a currency
-- `whitelist_identifier(identifier)` - Approve an identifier
-- `resolve_disputed_assertion(assertion_id, resolution)` - Manually resolve disputes (Phase 1)
-
-### Core Methods
-
-- `ft_on_transfer(...)` - NEP-141 receiver for creating assertions and disputes via `ft_transfer_call`
-- `settle_assertion(assertion_id)` - Settle an undisputed assertion after expiry
-- `settle_and_get_assertion_result(assertion_id)` - Settle and return the result
-
-## Useful Links
-
-- [cargo-near](https://github.com/near/cargo-near) - NEAR smart contract development toolkit for Rust
-- [near CLI](https://near.cli.rs) - Interact with NEAR blockchain from command line
-- [NEAR Rust SDK Documentation](https://docs.near.org/sdk/rust/introduction)
-- [NEAR Documentation](https://docs.near.org)
-- [NEAR StackOverflow](https://stackoverflow.com/questions/tagged/nearprotocol)
-- [NEAR Discord](https://near.chat)
-- [NEAR Telegram Developers Community Group](https://t.me/neardev)
-- NEAR DevHub: [Telegram](https://t.me/neardevhub), [Twitter](https://twitter.com/neardevhub)
+- [NEAR Rust SDK](https://docs.near.org/sdk/rust/introduction)
+- [UMA Protocol](https://docs.uma.xyz/)

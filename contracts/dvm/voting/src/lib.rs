@@ -2,6 +2,8 @@ use near_sdk::json_types::U128;
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, CryptoHash, PanicOnDefault};
 
+use oracle_types::events::VotingEvent;
+
 /// Voting phases for commit-reveal mechanism
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -180,10 +182,14 @@ impl Voting {
 
         self.request_nonce += 1;
 
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"voting\",\"version\":\"1.0.0\",\"event\":\"price_requested\",\"data\":{{\"request_id\":\"{:?}\",\"identifier\":\"{}\",\"timestamp\":{},\"requester\":\"{}\"}}}}",
-            request_id, identifier, timestamp, requester
-        ));
+        VotingEvent::PriceRequested {
+            request_id: &request_id,
+            identifier: &identifier,
+            timestamp,
+            ancillary_data: &ancillary_data,
+            requester: &requester,
+        }
+        .emit();
 
         request_id
     }
@@ -247,10 +253,12 @@ impl Voting {
         self.total_committed_stake
             .insert(request_id, total + staked_amount.0);
 
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"voting\",\"version\":\"1.0.0\",\"event\":\"vote_committed\",\"data\":{{\"request_id\":\"{:?}\",\"voter\":\"{}\",\"staked_amount\":\"{}\"}}}}",
-            request_id, voter, staked_amount.0
-        ));
+        VotingEvent::VoteCommitted {
+            request_id: &request_id,
+            voter: &voter,
+            stake: &staked_amount,
+        }
+        .emit();
     }
 
     /// Advance a request from commit phase to reveal phase.
@@ -280,10 +288,11 @@ impl Voting {
         request.reveal_start_time = now;
         self.requests.insert(request_id, request);
 
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"voting\",\"version\":\"1.0.0\",\"event\":\"phase_advanced\",\"data\":{{\"request_id\":\"{:?}\",\"new_phase\":\"Reveal\"}}}}",
-            request_id
-        ));
+        VotingEvent::RevealPhaseStarted {
+            request_id: &request_id,
+            reveal_start_time: now,
+        }
+        .emit();
     }
 
     /// Reveal a previously committed vote.
@@ -333,12 +342,16 @@ impl Voting {
 
         commitment.revealed = true;
         commitment.revealed_price = Some(price);
-        commitments.insert(voter.clone(), commitment.clone());
+        let stake = U128(commitment.staked_amount);
+        commitments.insert(voter.clone(), commitment);
 
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"voting\",\"version\":\"1.0.0\",\"event\":\"vote_revealed\",\"data\":{{\"request_id\":\"{:?}\",\"voter\":\"{}\",\"price\":{},\"staked_amount\":\"{}\"}}}}",
-            request_id, voter, price, commitment.staked_amount
-        ));
+        VotingEvent::VoteRevealed {
+            request_id: &request_id,
+            voter: &voter,
+            price,
+            stake: &stake,
+        }
+        .emit();
     }
 
     /// Resolve a price request after reveal phase ends.
@@ -383,12 +396,15 @@ impl Voting {
         request.phase = VotingPhase::Resolved;
         request.status = RequestStatus::Resolved;
         request.resolved_price = Some(resolved_price);
-        self.requests.insert(request_id, request.clone());
+        self.requests.insert(request_id, request);
 
-        env::log_str(&format!(
-            "EVENT_JSON:{{\"standard\":\"voting\",\"version\":\"1.0.0\",\"event\":\"price_resolved\",\"data\":{{\"request_id\":\"{:?}\",\"resolved_price\":{},\"identifier\":\"{}\"}}}}",
-            request_id, resolved_price, request.identifier
-        ));
+        let total_stake = self.get_total_committed_stake(request_id);
+        VotingEvent::PriceResolved {
+            request_id: &request_id,
+            resolved_price,
+            total_stake: &total_stake,
+        }
+        .emit();
 
         resolved_price
     }

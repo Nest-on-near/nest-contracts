@@ -10,3 +10,10 @@
 ///
 /// Equivalent to `bytes32` in Solidity.
 pub type Bytes32 = [u8; 32];
+
+/// A 32-byte cryptographic hash.
+///
+/// Used for:
+/// - Vote request IDs
+/// - Commit hashes in commit-reveal voting
+pub type CryptoHash = [u8; 32];
