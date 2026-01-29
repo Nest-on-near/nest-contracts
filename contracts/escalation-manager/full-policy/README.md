@@ -22,9 +22,9 @@ cargo near build non-reproducible-wasm
 ### 1. Create account and deploy
 
 ```bash
-near account create-account sponsor-by-faucet-service nest-escalation-full.testnet autogenerate-new-keypair save-to-folder ~/.near-credentials/testnet network-config testnet create
+near account create-account sponsor-by-faucet-service nest-escalation-full.testnet autogenerate-new-keypair save-to-keychain network-config testnet create
 
-near contract deploy nest-escalation-full.testnet use-file ../../../target/near/full_policy_escalation_manager/full_policy_escalation_manager.wasm without-init-call network-config testnet sign-with-keychain send
+near deploy nest-escalation-full.testnet ../../../target/near/full_policy_escalation_manager/full_policy_escalation_manager.wasm
 ```
 
 ### 2. Initialize the contract

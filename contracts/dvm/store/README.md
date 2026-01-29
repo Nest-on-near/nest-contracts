@@ -1,43 +1,66 @@
-# store
+# Store
 
-cargo-near-new-project-description
+Oracle fee collection and management contract. Tracks final fees per currency.
 
-## How to Build Locally?
+## Overview
 
-Install [`cargo-near`](https://github.com/near/cargo-near) and run:
+- Manages final fees per currency (NEP-141 tokens)
+- Final fees are paid when disputes are resolved
+- Withdrawer can collect accumulated fees
+- Owner can configure fee amounts
+
+## Building
 
 ```bash
-cargo near build
+cd contracts/dvm/store
+cargo near build non-reproducible-wasm
 ```
 
-## How to Test Locally?
+## Deployment
+
+### 1. Create account and deploy
 
 ```bash
-cargo test
+near account create-account sponsor-by-faucet-service nest-store.testnet autogenerate-new-keypair save-to-keychain network-config testnet create
+
+near deploy nest-store.testnet ../../../target/near/store/store.wasm
 ```
 
-## How to Deploy?
+### 2. Initialize the contract
 
-Deployment is automated with GitHub Actions CI/CD pipeline.
-To deploy manually, install [`cargo-near`](https://github.com/near/cargo-near) and run:
-
-If you deploy for debugging purposes:
 ```bash
-cargo near deploy build-non-reproducible-wasm <account-id>
+near contract call-function as-transaction nest-store.testnet new json-args '{
+  "owner": "YOUR_OWNER_ACCOUNT.testnet",
+  "withdrawer": "YOUR_TREASURY_ACCOUNT.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-store.testnet network-config testnet sign-with-keychain send
 ```
 
-If you deploy production ready smart contract:
+**Parameters:**
+- `owner`: Account that can set fees and manage withdrawer
+- `withdrawer`: Account that can withdraw collected fees
+
+### 3. Set final fees for currencies
+
 ```bash
-cargo near deploy build-reproducible-wasm <account-id>
+# Set final fee for wNEAR (24 decimals, 1 NEAR = 1000000000000000000000000)
+near contract call-function as-transaction nest-store.testnet set_final_fee json-args '{
+  "currency": "wrap.testnet",
+  "fee": "1000000000000000000000000"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as YOUR_OWNER_ACCOUNT.testnet network-config testnet sign-with-keychain send
 ```
 
-## Useful Links
+## View Methods
 
-- [cargo-near](https://github.com/near/cargo-near) - NEAR smart contract development toolkit for Rust
-- [near CLI](https://near.cli.rs) - Interact with NEAR blockchain from command line
-- [NEAR Rust SDK Documentation](https://docs.near.org/sdk/rust/introduction)
-- [NEAR Documentation](https://docs.near.org)
-- [NEAR StackOverflow](https://stackoverflow.com/questions/tagged/nearprotocol)
-- [NEAR Discord](https://near.chat)
-- [NEAR Telegram Developers Community Group](https://t.me/neardev)
-- NEAR DevHub: [Telegram](https://t.me/neardevhub), [Twitter](https://twitter.com/neardevhub)
+```bash
+# Get final fee for a currency
+near contract call-function as-read-only nest-store.testnet get_final_fee json-args '{"currency": "wrap.testnet"}' network-config testnet now
+
+# Check if final fee is set
+near contract call-function as-read-only nest-store.testnet has_final_fee json-args '{"currency": "wrap.testnet"}' network-config testnet now
+```
+
+## Testing
+
+```bash
+cargo test -p store
+```

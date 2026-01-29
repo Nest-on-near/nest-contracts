@@ -21,9 +21,9 @@ cargo near build non-reproducible-wasm
 ### 1. Create account and deploy
 
 ```bash
-near account create-account sponsor-by-faucet-service nest-escalation-whitelist.testnet autogenerate-new-keypair save-to-folder ~/.near-credentials/testnet network-config testnet create
+near account create-account sponsor-by-faucet-service nest-escalation-whitelist.testnet autogenerate-new-keypair save-to-keychain network-config testnet create
 
-near contract deploy nest-escalation-whitelist.testnet use-file ../../../target/near/whitelist_disputer_escalation_manager/whitelist_disputer_escalation_manager.wasm without-init-call network-config testnet sign-with-keychain send
+near deploy nest-escalation-whitelist.testnet ../../../target/near/whitelist_disputer_escalation_manager/whitelist_disputer_escalation_manager.wasm
 ```
 
 ### 2. Initialize the contract

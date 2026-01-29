@@ -74,61 +74,39 @@ sequenceDiagram
 
 ## Contracts
 
+Each contract has its own README with detailed deployment commands.
+
 ### Core Oracle
 
-**Optimistic Oracle** (`contracts/optimistic-oracle`)
-
-The main entry point for the system. Accepts assertions with bonded stakes, enforces liveness periods during which assertions can be disputed, and settles assertions by distributing bonds to the correct party.
-
-### Escalation Managers
-
-**Base Escalation Manager** (`contracts/escalation-manager/base`)
-
-Abstract base implementation defining the interface for escalation policies. Provides hooks for assertion validation, dispute handling, and price resolution callbacks.
-
-**Whitelist Disputer** (`contracts/escalation-manager/whitelist-disputer`)
-
-Restricts who can dispute assertions to a predefined set of addresses. Useful for controlled environments where only trusted parties should challenge claims.
-
-**Full Policy Manager** (`contracts/escalation-manager/full-policy`)
-
-Comprehensive escalation manager with configurable policies for assertion validation, dispute windows, and bond requirements. Supports blocking certain asserters or claims.
+| Contract | Description | Docs |
+|----------|-------------|------|
+| **Optimistic Oracle** | Main entry point. Accepts assertions with bonds, handles disputes and settlements. | [README](contracts/optimistic-oracle/README.md) |
 
 ### DVM (Data Verification Mechanism)
 
-**Voting Token** (`contracts/dvm/voting-token`)
+| Contract | Description | Docs |
+|----------|-------------|------|
+| **Voting Token** | NEP-141 token for governance voting. Minters/burners controlled by owner. | [README](contracts/dvm/voting-token/README.md) |
+| **Finder** | Service discovery. Maps interface names to contract addresses. | [README](contracts/dvm/finder/README.md) |
+| **Store** | Fee collection. Tracks final fees per currency. | [README](contracts/dvm/store/README.md) |
+| **Identifier Whitelist** | Approved price identifiers for oracle requests. | [README](contracts/dvm/identifier-whitelist/README.md) |
+| **Registry** | Authorized contracts that can interact with oracle. | [README](contracts/dvm/registry/README.md) |
+| **Slashing Library** | Calculates penalties for incorrect votes. | [README](contracts/dvm/slashing-library/README.md) |
+| **Voting** | Commit-reveal voting for dispute resolution. | [README](contracts/dvm/voting/README.md) |
 
-NEP-141 fungible token used for governance voting in the DVM. Token holders stake to participate in dispute resolution and earn rewards for voting correctly.
+### Escalation Managers
 
-**Finder** (`contracts/dvm/finder`)
-
-Service discovery contract that maps interface names to contract addresses. Enables upgradability without hardcoding addresses throughout the system.
-
-**Store** (`contracts/dvm/store`)
-
-Manages fee collection and distribution for the oracle system. Tracks final fees per currency and handles payouts to voters and the protocol.
-
-**Identifier Whitelist** (`contracts/dvm/identifier-whitelist`)
-
-Maintains the list of approved price identifiers for oracle requests. Prevents arbitrary or malicious identifiers from being submitted to the DVM.
-
-**Registry** (`contracts/dvm/registry`)
-
-Tracks which contracts are authorized to interact with the oracle system. Only registered contracts can submit price requests to the DVM.
-
-**Slashing Library** (`contracts/dvm/slashing-library`)
-
-Calculates penalties for voters who vote against the resolved outcome. Implements configurable slashing rates to incentivize honest voting.
-
-**Voting** (`contracts/dvm/voting`)
-
-Core commit-reveal voting mechanism for dispute resolution. Voters commit hashed votes, then reveal them. Final price is determined by stake-weighted median.
+| Contract | Description | Docs |
+|----------|-------------|------|
+| **Base Escalation Manager** | Default implementation with permissive policies. | [README](contracts/escalation-manager/base/README.md) |
+| **Whitelist Disputer** | Restricts disputes to whitelisted addresses. | [README](contracts/escalation-manager/whitelist-disputer/README.md) |
+| **Full Policy Manager** | Configurable assertion/dispute policies with custom arbitration. | [README](contracts/escalation-manager/full-policy/README.md) |
 
 ### Examples
 
-**Basic Assertion** (`contracts/examples/basic-assertion`)
-
-Example contract demonstrating integration with the Optimistic Oracle. Shows the pattern for making assertions via `ft_transfer_call` and handling callbacks.
+| Contract | Description |
+|----------|-------------|
+| **Basic Assertion** | Example integration with Optimistic Oracle. |
 
 ## Prerequisites
 
@@ -139,26 +117,97 @@ Example contract demonstrating integration with the Optimistic Oracle. Shows the
 ## Building
 
 ```bash
+# Build a single contract
 cd contracts/optimistic-oracle && cargo near build non-reproducible-wasm
+
+# Build all DVM contracts
+for contract in voting-token finder store identifier-whitelist registry slashing-library voting; do
+  (cd contracts/dvm/$contract && cargo near build non-reproducible-wasm)
+done
+
+# Build escalation managers (optional)
+for contract in base whitelist-disputer full-policy; do
+  (cd contracts/escalation-manager/$contract && cargo near build non-reproducible-wasm)
+done
+
+# Build optimistic oracle
+(cd contracts/optimistic-oracle && cargo near build non-reproducible-wasm)
 ```
+
+Output WASM files are in `target/near/<contract_name>/<contract_name>.wasm`
 
 ## Testing
 
 ```bash
+# Run all unit tests
 cargo test --workspace
+
+# Run integration tests (requires built WASM files)
+cargo test -p integration-tests
+
+# Run a specific contract's tests
+cargo test -p voting-token
+cargo test -p optimistic-oracle
 ```
 
-## Deployment Order
+## Deployment Guide
 
-1. VotingToken
-2. Finder
-3. Store
-4. IdentifierWhitelist
-5. Registry
-6. SlashingLibrary
-7. Voting
-8. Escalation Manager(s)
-9. Optimistic Oracle
+### Current Testnet Deployment
+
+The following contracts are currently deployed on NEAR testnet:
+
+| Contract | Address |
+|----------|---------|
+| Voting Token | `nest-token-1.testnet` |
+| Finder | `nest-finder-1.testnet` |
+| Store | `nest-store-1.testnet` |
+| Identifier Whitelist | `nest-identifiers-1.testnet` |
+| Registry | `nest-registry-1.testnet` |
+| Slashing Library | `nest-slashing-1.testnet` |
+| Voting | `nest-voting-1.testnet` |
+| Optimistic Oracle | `nest-oracle-2.testnet` |
+| **Owner** | `nest-owner-1.testnet` |
+| **Treasury** | `nest-treasury-1.testnet` |
+
+### Quick Start (Testnet)
+
+#### 1. Build all contracts
+
+See [Building](#building) section above.
+
+#### 2. Deploy in order
+
+Deploy contracts in this order (each depends on previous ones):
+
+| Order | Contract | Suggested Account | Docs |
+|-------|----------|------------------|------|
+| 1 | Voting Token | `nest-token.testnet` | [README](contracts/dvm/voting-token/README.md) |
+| 2 | Finder | `nest-finder.testnet` | [README](contracts/dvm/finder/README.md) |
+| 3 | Store | `nest-store.testnet` | [README](contracts/dvm/store/README.md) |
+| 4 | Identifier Whitelist | `nest-identifiers.testnet` | [README](contracts/dvm/identifier-whitelist/README.md) |
+| 5 | Registry | `nest-registry.testnet` | [README](contracts/dvm/registry/README.md) |
+| 6 | Slashing Library | `nest-slashing.testnet` | [README](contracts/dvm/slashing-library/README.md) |
+| 7 | Voting | `nest-voting.testnet` | [README](contracts/dvm/voting/README.md) |
+| 8* | Base Escalation Manager | `nest-escalation-base.testnet` | [README](contracts/escalation-manager/base/README.md) |
+| 9* | Whitelist Disputer | `nest-escalation-whitelist.testnet` | [README](contracts/escalation-manager/whitelist-disputer/README.md) |
+| 10* | Full Policy Manager | `nest-escalation-full.testnet` | [README](contracts/escalation-manager/full-policy/README.md) |
+| 11 | Optimistic Oracle | `nest-oracle.testnet` | [README](contracts/optimistic-oracle/README.md) |
+
+**\*Optional:** Escalation managers are only needed if you want to customize assertion/dispute behavior.
+
+#### 3. Post-deployment configuration
+
+After deploying all contracts, complete the configuration steps in **[POST_DEPLOYMENT.md](POST_DEPLOYMENT.md)**.
+
+**Quick summary:**
+1. Add Voting as minter on VotingToken
+2. Register all interfaces in Finder
+3. Whitelist price identifiers (ASSERT_TRUTH, YES_OR_NO_QUERY)
+4. Set final fees in Store
+5. Whitelist currencies in Oracle
+6. Register Oracle in Registry
+
+See [POST_DEPLOYMENT.md](POST_DEPLOYMENT.md) for complete step-by-step commands with verification.
 
 ## Links
 
