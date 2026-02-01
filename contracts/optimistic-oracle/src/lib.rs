@@ -1,5 +1,5 @@
 use near_sdk::{
-    env, near, require, AccountId, PanicOnDefault, Promise, Gas, NearToken,
+    env, near, require, AccountId, PanicOnDefault, Promise, PromiseError, Gas, NearToken, CryptoHash,
     store::LookupMap,
     json_types::{U64, U128},
     serde::{Deserialize, Serialize},
@@ -8,6 +8,10 @@ use near_sdk::{
 /// Gas for cross-contract calls
 const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(5);
+const GAS_FOR_DVM_REQUEST: Gas = Gas::from_tgas(30);
+const GAS_FOR_DVM_CALLBACK: Gas = Gas::from_tgas(50);
+const GAS_FOR_DVM_GET_PRICE: Gas = Gas::from_tgas(10);
+const GAS_FOR_SETTLE_CALLBACK: Gas = Gas::from_tgas(80);
 
 use oracle_types::{
     types::Bytes32,
@@ -104,6 +108,16 @@ pub struct NestOptimisticOracle {
     /// All assertions made by the Optimistic Oracle
     /// Equivalent to: mapping(bytes32 => Assertion) assertions
     assertions: LookupMap<Bytes32, Assertion>,
+
+    /// DVM Voting contract for dispute resolution
+    voting_contract: Option<AccountId>,
+
+    /// Mapping from assertion_id to DVM request_id for disputed assertions
+    /// Used to track which DVM vote corresponds to which assertion
+    dispute_requests: LookupMap<Bytes32, CryptoHash>,
+
+    /// Reverse mapping from DVM request_id to assertion_id
+    request_to_assertion: LookupMap<CryptoHash, Bytes32>,
 }
 
 // ============================================================================
@@ -120,6 +134,7 @@ impl NestOptimisticOracle {
         default_currency: AccountId,
         default_liveness_ns: Option<U64>,
         burned_bond_percentage: Option<U128>,
+        voting_contract: Option<AccountId>,
     ) -> Self {
         let liveness = default_liveness_ns
             .map(|l| l.0)
@@ -140,6 +155,9 @@ impl NestOptimisticOracle {
             cached_currencies: LookupMap::new(b"c"),
             cached_identifiers: LookupMap::new(b"i"),
             assertions: LookupMap::new(b"a"),
+            voting_contract,
+            dispute_requests: LookupMap::new(b"d"),
+            request_to_assertion: LookupMap::new(b"r"),
         };
 
         // Cache the default identifier as approved
@@ -227,6 +245,21 @@ impl NestOptimisticOracle {
             .unwrap_or(false)
     }
 
+    /// Get the voting contract address
+    pub fn get_voting_contract(&self) -> Option<AccountId> {
+        self.voting_contract.clone()
+    }
+
+    /// Get the DVM request ID for a disputed assertion
+    pub fn get_dispute_request(&self, assertion_id: Bytes32) -> Option<CryptoHash> {
+        self.dispute_requests.get(&assertion_id).copied()
+    }
+
+    /// Check if a disputed assertion has been resolved by DVM
+    pub fn is_dispute_resolved(&self, assertion_id: Bytes32) -> bool {
+        self.dispute_requests.get(&assertion_id).is_some()
+    }
+
     // ========================================================================
     // Admin Methods (onlyOwner)
     // ========================================================================
@@ -274,6 +307,12 @@ impl NestOptimisticOracle {
         self.cached_identifiers.insert(identifier, true);
     }
 
+    /// Set the DVM voting contract address
+    pub fn set_voting_contract(&mut self, voting_contract: AccountId) {
+        self.assert_owner();
+        self.voting_contract = Some(voting_contract);
+    }
+
     // ========================================================================
     // NEP-141 Receiver (for bonding)
     // ========================================================================
@@ -294,7 +333,7 @@ impl NestOptimisticOracle {
 
         match parsed_msg {
             FtOnTransferMsg::AssertTruth(args) => {
-                let assertion_id = self.internal_assert_truth(
+                let _assertion_id = self.internal_assert_truth(
                     args.claim,
                     args.asserter,
                     args.callback_recipient,
@@ -447,6 +486,9 @@ impl NestOptimisticOracle {
             "Dispute bond too low"
         );
 
+        // Store the identifier before we release the borrow
+        let identifier = assertion.identifier;
+
         // Set the disputer
         assertion.disputer = Some(disputer.clone());
 
@@ -457,8 +499,69 @@ impl NestOptimisticOracle {
             disputer: &disputer,
         }.emit();
 
-        // Note: In Phase 1, we don't have DVM/escalation manager for dispute resolution
-        // The dispute will need to be resolved manually or via a future oracle integration
+        // Escalate to DVM if voting contract is configured
+        if let Some(ref voting_contract) = self.voting_contract {
+            // Convert identifier to string for DVM
+            let identifier_str = String::from_utf8_lossy(&identifier)
+                .trim_end_matches('\0')
+                .to_string();
+
+            // Use assertion_id as ancillary data so DVM can identify the dispute
+            let ancillary_data = assertion_id.to_vec();
+
+            // Call voting.request_price() to create a DVM vote
+            let _ = Promise::new(voting_contract.clone())
+                .function_call(
+                    "request_price".to_string(),
+                    near_sdk::serde_json::json!({
+                        "identifier": identifier_str,
+                        "timestamp": current_time,
+                        "ancillary_data": ancillary_data,
+                    })
+                    .to_string()
+                    .into_bytes(),
+                    NearToken::from_yoctonear(0),
+                    GAS_FOR_DVM_REQUEST,
+                )
+                .then(
+                    Promise::new(env::current_account_id())
+                        .function_call(
+                            "on_dvm_request_complete".to_string(),
+                            near_sdk::serde_json::json!({
+                                "assertion_id": assertion_id,
+                            })
+                            .to_string()
+                            .into_bytes(),
+                            NearToken::from_yoctonear(0),
+                            GAS_FOR_DVM_CALLBACK,
+                        )
+                );
+        }
+    }
+
+    /// Callback after DVM request_price completes
+    /// Stores the request_id for later settlement
+    #[private]
+    pub fn on_dvm_request_complete(
+        &mut self,
+        assertion_id: Bytes32,
+        #[callback_result] request_id_result: Result<CryptoHash, PromiseError>,
+    ) {
+        match request_id_result {
+            Ok(request_id) => {
+                // Store the mapping between assertion and DVM request
+                self.dispute_requests.insert(assertion_id, request_id);
+                self.request_to_assertion.insert(request_id, assertion_id);
+
+                env::log_str(&format!(
+                    "DVM request created for assertion. request_id: {:?}",
+                    hex::encode(request_id)
+                ));
+            }
+            Err(_) => {
+                env::log_str("Failed to create DVM request - dispute will need manual resolution");
+            }
+        }
     }
 
     // ========================================================================
@@ -466,7 +569,7 @@ impl NestOptimisticOracle {
     // ========================================================================
 
     /// Resolves an assertion. If the assertion has not been disputed, the assertion is resolved
-    /// as true and the asserter receives the bond. If disputed, resolution depends on oracle result.
+    /// as true and the asserter receives the bond. If disputed, resolution is fetched from DVM.
     /// Equivalent to: function settleAssertion(bytes32 assertionId) public
     pub fn settle_assertion(&mut self, assertion_id: Bytes32) {
         let current_time = self.get_current_time();
@@ -515,9 +618,61 @@ impl NestOptimisticOracle {
                 settle_caller: &env::predecessor_account_id(),
             }.emit();
         } else {
-            // Disputed - Phase 1: For now, we need manual resolution by owner
-            // In a full implementation, this would query the DVM/escalation manager
-            env::panic_str("Disputed assertions require manual resolution in Phase 1");
+            // Disputed - check if DVM has resolved this
+            let request_id = self.dispute_requests.get(&assertion_id)
+                .expect("Dispute not escalated to DVM - use resolve_disputed_assertion for manual resolution");
+
+            let voting_contract = self.voting_contract.clone()
+                .expect("Voting contract not configured");
+
+            // Query DVM for resolution and settle in callback
+            let _ = Promise::new(voting_contract)
+                .function_call(
+                    "get_price".to_string(),
+                    near_sdk::serde_json::json!({
+                        "request_id": request_id,
+                    })
+                    .to_string()
+                    .into_bytes(),
+                    NearToken::from_yoctonear(0),
+                    GAS_FOR_DVM_GET_PRICE,
+                )
+                .then(
+                    Promise::new(env::current_account_id())
+                        .function_call(
+                            "on_dvm_price_received".to_string(),
+                            near_sdk::serde_json::json!({
+                                "assertion_id": assertion_id,
+                            })
+                            .to_string()
+                            .into_bytes(),
+                            NearToken::from_yoctonear(0),
+                            GAS_FOR_SETTLE_CALLBACK,
+                        )
+                );
+        }
+    }
+
+    /// Callback after DVM get_price completes
+    /// Settles the disputed assertion based on DVM resolution
+    #[private]
+    pub fn on_dvm_price_received(
+        &mut self,
+        assertion_id: Bytes32,
+        #[callback_result] price_result: Result<Option<i128>, PromiseError>,
+    ) {
+        match price_result {
+            Ok(Some(price)) => {
+                // DVM has resolved - price >= NUMERICAL_TRUE means asserter wins
+                let resolution = price >= NUMERICAL_TRUE;
+                self.internal_settle_disputed_assertion(assertion_id, resolution);
+            }
+            Ok(None) => {
+                env::panic_str("DVM has not resolved this dispute yet");
+            }
+            Err(_) => {
+                env::panic_str("Failed to get DVM resolution");
+            }
         }
     }
 
@@ -534,8 +689,9 @@ impl NestOptimisticOracle {
         self.get_assertion_result(assertion_id)
     }
 
-    /// Admin method to manually resolve a disputed assertion (Phase 1 only)
-    /// In production, this would be replaced by DVM/escalation manager integration
+    /// Admin method to manually resolve a disputed assertion
+    /// This is a fallback for when DVM escalation fails or is not configured
+    /// In normal operation, use settle_assertion which queries DVM automatically
     pub fn resolve_disputed_assertion(
         &mut self,
         assertion_id: Bytes32,
@@ -543,6 +699,26 @@ impl NestOptimisticOracle {
     ) {
         self.assert_owner();
 
+        let assertion = self.assertions.get(&assertion_id)
+            .expect("Assertion does not exist");
+
+        require!(!assertion.settled, "Assertion already settled");
+        require!(assertion.disputer.is_some(), "Assertion not disputed");
+
+        // Check if DVM has been used - if so, should use settle_assertion instead
+        if self.dispute_requests.get(&assertion_id).is_some() {
+            env::log_str("Warning: This dispute was escalated to DVM. Consider using settle_assertion instead.");
+        }
+
+        self.internal_settle_disputed_assertion(assertion_id, resolution);
+    }
+
+    /// Internal helper to settle a disputed assertion
+    fn internal_settle_disputed_assertion(
+        &mut self,
+        assertion_id: Bytes32,
+        resolution: bool, // true = asserter wins, false = disputer wins
+    ) {
         let assertion = self.assertions.get(&assertion_id)
             .expect("Assertion does not exist")
             .clone();
@@ -724,12 +900,33 @@ mod tests {
             currency.clone(),
             None,
             None,
+            None, // No voting contract for basic test
         );
 
         assert_eq!(contract.default_identifier(), DEFAULT_IDENTIFIER);
         assert_eq!(contract.default_liveness().0, DEFAULT_LIVENESS_NS);
         assert_eq!(contract.default_currency(), currency);
         assert!(contract.is_identifier_supported(DEFAULT_IDENTIFIER));
+    }
+
+    #[test]
+    fn test_new_with_voting_contract() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+        let voting: AccountId = "voting.near".parse().unwrap();
+
+        let context = get_context(owner.clone());
+        testing_env!(context.build());
+
+        let contract = NestOptimisticOracle::new(
+            owner.clone(),
+            currency.clone(),
+            None,
+            None,
+            Some(voting.clone()),
+        );
+
+        assert_eq!(contract.get_voting_contract(), Some(voting));
     }
 
     #[test]
@@ -745,6 +942,7 @@ mod tests {
             currency.clone(),
             None,
             None,
+            None,
         );
 
         // Currency not whitelisted yet
@@ -757,5 +955,29 @@ mod tests {
         // = 1e18 * 1e18 / 0.5e18 = 2e18
         let expected_min_bond = 2 * SCALE;
         assert_eq!(contract.get_minimum_bond(currency).0, expected_min_bond);
+    }
+
+    #[test]
+    fn test_set_voting_contract() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+        let voting: AccountId = "voting.near".parse().unwrap();
+
+        let context = get_context(owner.clone());
+        testing_env!(context.build());
+
+        let mut contract = NestOptimisticOracle::new(
+            owner.clone(),
+            currency.clone(),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(contract.get_voting_contract(), None);
+
+        contract.set_voting_contract(voting.clone());
+
+        assert_eq!(contract.get_voting_contract(), Some(voting));
     }
 }

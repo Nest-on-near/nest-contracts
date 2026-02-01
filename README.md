@@ -165,7 +165,7 @@ The following contracts are currently deployed on NEAR testnet:
 | Registry | `nest-registry-1.testnet` |
 | Slashing Library | `nest-slashing-1.testnet` |
 | Voting | `nest-voting-1.testnet` |
-| Optimistic Oracle | `nest-oracle-2.testnet` |
+| Optimistic Oracle | `nest-oracle-3.testnet` |
 | **Owner** | `nest-owner-1.testnet` |
 | **Treasury** | `nest-treasury-1.testnet` |
 
@@ -191,7 +191,7 @@ Deploy contracts in this order (each depends on previous ones):
 | 8* | Base Escalation Manager | `nest-escalation-base.testnet` | [README](contracts/escalation-manager/base/README.md) |
 | 9* | Whitelist Disputer | `nest-escalation-whitelist.testnet` | [README](contracts/escalation-manager/whitelist-disputer/README.md) |
 | 10* | Full Policy Manager | `nest-escalation-full.testnet` | [README](contracts/escalation-manager/full-policy/README.md) |
-| 11 | Optimistic Oracle | `nest-oracle.testnet` | [README](contracts/optimistic-oracle/README.md) |
+| 11 | Optimistic Oracle | `nest-oracle-3.testnet` | [README](contracts/optimistic-oracle/README.md) |
 
 **\*Optional:** Escalation managers are only needed if you want to customize assertion/dispute behavior.
 

@@ -13,7 +13,7 @@ After deploying all contracts, complete these configuration steps in order.
 | Registry | `nest-registry-1.testnet` |
 | Slashing Library | `nest-slashing-1.testnet` |
 | Voting | `nest-voting-1.testnet` |
-| Optimistic Oracle | `nest-oracle-2.testnet` |
+| Optimistic Oracle | `nest-oracle-3.testnet` |
 | **Owner** | `nest-owner-1.testnet` |
 | **Treasury** | `nest-treasury-1.testnet` |
 
@@ -135,7 +135,7 @@ Whitelist bond tokens in the Optimistic Oracle:
 
 ```bash
 # Whitelist wNEAR with final fee of 0.1 NEAR
-near contract call-function as-transaction nest-oracle-2.testnet whitelist_currency json-args '{
+near contract call-function as-transaction nest-oracle-3.testnet whitelist_currency json-args '{
   "currency": "wrap.testnet",
   "final_fee": "100000000000000000000000"
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
@@ -143,12 +143,12 @@ near contract call-function as-transaction nest-oracle-2.testnet whitelist_curre
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-oracle-2.testnet is_currency_whitelisted json-args '{
+near contract call-function as-read-only nest-oracle-3.testnet is_currency_whitelisted json-args '{
   "currency": "wrap.testnet"
 }' network-config testnet now
 
 # Check minimum bond required
-near contract call-function as-read-only nest-oracle-2.testnet get_minimum_bond json-args '{
+near contract call-function as-read-only nest-oracle-3.testnet get_minimum_bond json-args '{
   "currency": "wrap.testnet"
 }' network-config testnet now
 ```
@@ -160,14 +160,14 @@ near contract call-function as-read-only nest-oracle-2.testnet get_minimum_bond 
 Whitelist the default identifier (should be done during deployment, but verify):
 
 ```bash
-near contract call-function as-transaction nest-oracle-2.testnet whitelist_identifier json-args '{
+near contract call-function as-transaction nest-oracle-3.testnet whitelist_identifier json-args '{
   "identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-oracle-2.testnet is_identifier_supported json-args '{
+near contract call-function as-read-only nest-oracle-3.testnet is_identifier_supported json-args '{
   "identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
 }' network-config testnet now
 ```
@@ -180,14 +180,14 @@ Allow the Oracle to make price requests to the DVM:
 
 ```bash
 near contract call-function as-transaction nest-registry-1.testnet register_contract json-args '{
-  "contract_address": "nest-oracle-2.testnet"
+  "contract_address": "nest-oracle-3.testnet"
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
 near contract call-function as-read-only nest-registry-1.testnet is_contract_registered json-args '{
-  "contract_address": "nest-oracle-2.testnet"
+  "contract_address": "nest-oracle-3.testnet"
 }' network-config testnet now
 ```
 
@@ -212,10 +212,10 @@ near contract call-function as-read-only nest-finder-1.testnet get_implementatio
 near contract call-function as-read-only nest-identifiers-1.testnet is_identifier_supported json-args '{"identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}' network-config testnet now
 
 # Check currency is whitelisted in Oracle
-near contract call-function as-read-only nest-oracle-2.testnet is_currency_whitelisted json-args '{"currency": "wrap.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-oracle-3.testnet is_currency_whitelisted json-args '{"currency": "wrap.testnet"}' network-config testnet now
 
 # Check Oracle is registered
-near contract call-function as-read-only nest-registry-1.testnet is_contract_registered json-args '{"contract_address": "nest-oracle-2.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-registry-1.testnet is_contract_registered json-args '{"contract_address": "nest-oracle-3.testnet"}' network-config testnet now
 ```
 
 All commands should return `true` or the expected address.

@@ -1,0 +1,13 @@
+{
+  "name": "nest-oracle-scripts",
+  "version": "1.0.0",
+  "description": "JavaScript scripts for testing the NEST Optimistic Oracle on NEAR",
+  "type": "module",
+  "scripts": {
+    "test:oracle": "node test-oracle-flow.js"
+  },
+  "dependencies": {
+    "near-api-js": "^4.0.0",
+    "dotenv": "^16.3.1"
+  }
+}
