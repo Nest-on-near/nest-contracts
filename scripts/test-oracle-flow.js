@@ -270,13 +270,13 @@ async function makeAssertion(account, bondAmount, claimText) {
   // The ft_on_transfer returns a JSON string containing the assertion_id
   let assertionId = null;
 
-  // Look for the AssertionMade event in the receipts
+  // Look for the assertion_made event in the receipts
   for (const outcome of result.receipts_outcome) {
     for (const log of outcome.outcome.logs) {
-      if (log.includes('AssertionMade')) {
+      if (log.includes('assertion_made')) {
         try {
           const eventData = JSON.parse(log.replace('EVENT_JSON:', ''));
-          if (eventData.event === 'AssertionMade' && eventData.data?.[0]?.assertion_id) {
+          if (eventData.event === 'assertion_made' && eventData.data?.[0]?.assertion_id) {
             assertionId = eventData.data[0].assertion_id;
           }
         } catch (e) {
@@ -357,7 +357,7 @@ async function disputeAssertion(account, assertionId, bondAmount) {
   // Check for dispute event
   for (const outcome of result.receipts_outcome) {
     for (const log of outcome.outcome.logs) {
-      if (log.includes('AssertionDisputed')) {
+      if (log.includes('assertion_disputed')) {
         console.log('Event:', log);
       }
     }
@@ -393,7 +393,7 @@ async function settleViaDvm(account, assertionId) {
   // Check for settlement event
   for (const outcome of result.receipts_outcome) {
     for (const log of outcome.outcome.logs) {
-      if (log.includes('AssertionSettled')) {
+      if (log.includes('assertion_settled')) {
         console.log('Event:', log);
       }
     }
@@ -430,7 +430,7 @@ async function settleDisputedAssertion(account, assertionId, resolution) {
   // Check for settlement event
   for (const outcome of result.receipts_outcome) {
     for (const log of outcome.outcome.logs) {
-      if (log.includes('AssertionSettled')) {
+      if (log.includes('assertion_settled')) {
         console.log('Event:', log);
       }
     }
