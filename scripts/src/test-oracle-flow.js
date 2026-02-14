@@ -30,7 +30,7 @@ import 'dotenv/config';
 // Configuration
 const CONFIG = {
   networkId: process.env.NETWORK_ID || 'testnet',
-  nodeUrl: 'https://rpc.testnet.near.org',
+  nodeUrl: 'https://test.rpc.fastnear.com',
   walletUrl: 'https://testnet.mynearwallet.com',
   helperUrl: 'https://helper.testnet.near.org',
 

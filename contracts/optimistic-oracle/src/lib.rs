@@ -23,7 +23,7 @@ use oracle_types::{
 // Constants
 // ============================================================================
 
-/// Default identifier for assertions (equivalent to "ASSERT_TRUTH" in UMA)
+/// Default identifier for assertions
 /// Padded to 32 bytes
 const DEFAULT_IDENTIFIER: Bytes32 = *b"ASSERT_TRUTH\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
@@ -98,15 +98,12 @@ pub struct NestOptimisticOracle {
     burned_bond_percentage: u128,
 
     /// Whitelisted currencies with their final fees
-    /// Equivalent to: mapping(address => WhitelistedCurrency) cachedCurrencies
     cached_currencies: LookupMap<AccountId, WhitelistedCurrency>,
 
     /// Cached identifiers that are approved for use
-    /// Equivalent to: mapping(bytes32 => bool) cachedIdentifiers
     cached_identifiers: LookupMap<Bytes32, bool>,
 
     /// All assertions made by the Optimistic Oracle
-    /// Equivalent to: mapping(bytes32 => Assertion) assertions
     assertions: LookupMap<Bytes32, Assertion>,
 
     /// DVM Voting contract for dispute resolution
@@ -127,7 +124,6 @@ pub struct NestOptimisticOracle {
 #[near]
 impl NestOptimisticOracle {
     /// Initialize the contract
-    /// Equivalent to constructor in OptimisticOracleV3.sol
     #[init]
     pub fn new(
         owner: AccountId,
@@ -178,7 +174,6 @@ impl NestOptimisticOracle {
     // ========================================================================
 
     /// Returns the default identifier used by the Optimistic Oracle
-    /// Equivalent to: function defaultIdentifier() external view returns (bytes32)
     pub fn default_identifier(&self) -> Bytes32 {
         DEFAULT_IDENTIFIER
     }
@@ -194,14 +189,12 @@ impl NestOptimisticOracle {
     }
 
     /// Fetches information about a specific assertion
-    /// Equivalent to: function getAssertion(bytes32 assertionId) external view returns (Assertion memory)
     pub fn get_assertion(&self, assertion_id: Bytes32) -> Option<Assertion> {
         self.assertions.get(&assertion_id).cloned()
     }
 
     /// Returns the minimum bond amount required to make an assertion
     /// min_bond = final_fee * 1e18 / burned_bond_percentage
-    /// Equivalent to: function getMinimumBond(address currency) public view returns (uint256)
     pub fn get_minimum_bond(&self, currency: AccountId) -> U128 {
         match self.cached_currencies.get(&currency) {
             Some(cached) if cached.is_whitelisted => {
@@ -216,7 +209,6 @@ impl NestOptimisticOracle {
     }
 
     /// Fetches the resolution of a specific assertion
-    /// Equivalent to: function getAssertionResult(bytes32 assertionId) public view returns (bool)
     pub fn get_assertion_result(&self, assertion_id: Bytes32) -> bool {
         let assertion = self.assertions.get(&assertion_id)
             .expect("Assertion does not exist");
@@ -570,7 +562,6 @@ impl NestOptimisticOracle {
 
     /// Resolves an assertion. If the assertion has not been disputed, the assertion is resolved
     /// as true and the asserter receives the bond. If disputed, resolution is fetched from DVM.
-    /// Equivalent to: function settleAssertion(bytes32 assertionId) public
     pub fn settle_assertion(&mut self, assertion_id: Bytes32) {
         let current_time = self.get_current_time();
 

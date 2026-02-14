@@ -15,7 +15,7 @@ import 'dotenv/config';
 
 const CONFIG = {
   networkId: process.env.NETWORK_ID || 'testnet',
-  nodeUrl: 'https://rpc.testnet.near.org',
+  nodeUrl: 'https://test.rpc.fastnear.com',
   oracleContract: process.env.ORACLE_CONTRACT || 'nest-oracle-3.testnet',
   accountId: process.env.NEAR_ACCOUNT_ID,
   privateKey: process.env.NEAR_PRIVATE_KEY,

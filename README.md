@@ -5,44 +5,67 @@ An optimistic oracle implementation for NEAR Protocol, inspired by UMA's Optimis
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Consumers
-        PM[Prediction Market]
-        DAPP[Other dApps]
+flowchart LR
+    subgraph APP["Consumer dApps"]
+        PM["Prediction Market"]
+        DAPP["Other dApps"]
     end
 
-    subgraph Oracle Layer
-        OO[Optimistic Oracle]
+    subgraph CORE["Oracle Core"]
+        OO["Optimistic Oracle"]
     end
 
-    subgraph Escalation
-        EM_BASE[Base Escalation Manager]
-        EM_WL[Whitelist Disputer]
-        EM_FULL[Full Policy Manager]
+    subgraph ESC["Escalation Managers (optional)"]
+        EMB["Base Escalation Manager"]
+        EMW["Whitelist Disputer"]
+        EMF["Full Policy Manager"]
     end
 
-    subgraph DVM[Data Verification Mechanism]
-        VT[Voting Token]
-        FINDER[Finder]
-        STORE[Store]
-        VOTING[Voting]
-        ID_WL[Identifier Whitelist]
-        REG[Registry]
-        SLASH[Slashing Library]
+    subgraph DVM["DVM"]
+        VOT["Voting (commit-reveal)"]
+        VT["Voting Token (NEP-141)"]
+        SLASH["Slashing Library"]
+        FIND["Finder"]
+        STORE["Store (final fees)"]
+        REG["Registry"]
+        IDWL["Identifier Whitelist"]
     end
 
-    PM --> OO
-    DAPP --> OO
-    OO -->|if disputed| EM_BASE
-    EM_BASE --> EM_WL
-    EM_BASE --> EM_FULL
-    EM_WL --> VOTING
-    EM_FULL --> VOTING
-    VOTING --> VT
-    VOTING --> SLASH
-    FINDER --> STORE
-    FINDER --> REG
-    FINDER --> ID_WL
+    OWNER["Owner / Governance"]
+    ASSERT["Asserter / Disputer"]
+
+    PM -->|assert/dispute| OO
+    DAPP -->|assert/dispute| OO
+    ASSERT -->|bond transfer| OO
+
+    OO -->|dispute escalates| VOT
+    OO -->|policy hooks| EMB
+    OO -->|custom policy option| EMW
+    OO -->|custom policy option| EMF
+
+    EMB -->|request/get price| VOT
+    EMW -->|request/get price| VOT
+    EMF -->|request/get price or override| VOT
+
+    VOT -->|stake-weighted voting| VT
+    VOT -->|penalty calculations| SLASH
+
+    FIND -->|maps interface name -> address| VOT
+    FIND -->|maps interface name -> address| STORE
+    FIND -->|maps interface name -> address| REG
+    FIND -->|maps interface name -> address| IDWL
+
+    STORE -->|minimum bond/final fee source| OO
+    IDWL -->|approved identifiers| OO
+    REG -->|authorized caller checks| OO
+
+    OWNER -->|configures| OO
+    OWNER -->|configures| FIND
+    OWNER -->|configures| STORE
+    OWNER -->|configures| REG
+    OWNER -->|configures| IDWL
+    OWNER -->|configures| VT
+    OWNER -->|configures| VOT
 ```
 
 ## Dispute Resolution Flow
