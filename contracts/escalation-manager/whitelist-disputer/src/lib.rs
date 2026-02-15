@@ -47,7 +47,11 @@ impl WhitelistDisputerEscalationManager {
     ///
     /// * `dispute_caller` - The account to add/remove
     /// * `whitelisted` - True to add, false to remove
-    pub fn set_dispute_caller_in_whitelist(&mut self, dispute_caller: AccountId, whitelisted: bool) {
+    pub fn set_dispute_caller_in_whitelist(
+        &mut self,
+        dispute_caller: AccountId,
+        whitelisted: bool,
+    ) {
         self.assert_only_owner();
 
         if whitelisted {

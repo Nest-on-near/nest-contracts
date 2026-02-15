@@ -1,6 +1,9 @@
 use near_sdk::json_types::U128;
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::LookupMap;
-use near_sdk::{env, near, require, AccountId, CryptoHash, PanicOnDefault};
+use near_sdk::{
+    env, near, require, AccountId, CryptoHash, Gas, NearToken, PanicOnDefault, Promise,
+};
 
 use oracle_types::events::VotingEvent;
 
@@ -50,6 +53,12 @@ pub struct PriceRequest {
     pub reveal_start_time: u64,
     /// Resolved price (if resolved)
     pub resolved_price: Option<i128>,
+    /// Revealed stake observed for this request
+    pub revealed_stake: u128,
+    /// Number of automatic reveal extensions due to low participation
+    pub low_participation_extensions: u8,
+    /// Whether this request is blocked pending emergency resolution
+    pub emergency_required: bool,
 }
 
 /// A voter's commitment for a specific request
@@ -64,6 +73,16 @@ pub struct VoteCommitment {
     pub revealed: bool,
     /// The revealed price (only set after reveal)
     pub revealed_price: Option<i128>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+#[serde(tag = "action")]
+pub enum FtOnTransferMsg {
+    CommitVote {
+        request_id: CryptoHash,
+        commit_hash: CryptoHash,
+    },
 }
 
 /// Voting - DVM commit-reveal voting contract for dispute resolution.
@@ -103,6 +122,21 @@ pub struct Voting {
     /// Total committed stake per request
     total_committed_stake: LookupMap<CryptoHash, u128>,
 
+    /// Ordered list of voters per request (required for deterministic resolution)
+    request_voters: LookupMap<CryptoHash, Vec<AccountId>>,
+
+    /// Voting token (NEP-141) used for stake locking
+    voting_token: Option<AccountId>,
+
+    /// Treasury account that receives slashed stake share
+    treasury: Option<AccountId>,
+
+    /// Portion of slashed stake routed to treasury (bps)
+    slashing_treasury_bps: u16,
+
+    /// Maximum automatic reveal extensions before emergency path
+    max_low_participation_extensions: u8,
+
     /// Next request nonce for generating unique IDs
     request_nonce: u64,
 }
@@ -111,6 +145,7 @@ pub struct Voting {
 const DEFAULT_COMMIT_DURATION: u64 = 24 * 60 * 60 * 1_000_000_000; // 24 hours in nanoseconds
 const DEFAULT_REVEAL_DURATION: u64 = 24 * 60 * 60 * 1_000_000_000; // 24 hours in nanoseconds
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
+const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 
 #[near]
 impl Voting {
@@ -128,6 +163,11 @@ impl Voting {
             requests: LookupMap::new(b"r"),
             commitments: LookupMap::new(b"c"),
             total_committed_stake: LookupMap::new(b"s"),
+            request_voters: LookupMap::new(b"v"),
+            voting_token: None,
+            treasury: None,
+            slashing_treasury_bps: 5_000, // 50%
+            max_low_participation_extensions: 1,
             request_nonce: 0,
         }
     }
@@ -171,6 +211,9 @@ impl Voting {
             commit_start_time: env::block_timestamp(),
             reveal_start_time: 0,
             resolved_price: None,
+            revealed_stake: 0,
+            low_participation_extensions: 0,
+            emergency_required: false,
         };
 
         self.requests.insert(request_id, request);
@@ -179,6 +222,7 @@ impl Voting {
         self.commitments
             .insert(request_id, LookupMap::new(request_id.as_ref()));
         self.total_committed_stake.insert(request_id, 0);
+        self.request_voters.insert(request_id, Vec::new());
 
         self.request_nonce += 1;
 
@@ -203,18 +247,47 @@ impl Voting {
     /// * `staked_amount` - Amount of voting tokens staked for this vote
     pub fn commit_vote(
         &mut self,
-        request_id: CryptoHash,
-        commit_hash: CryptoHash,
-        staked_amount: U128,
+        _request_id: CryptoHash,
+        _commit_hash: CryptoHash,
+        _staked_amount: U128,
     ) {
-        let voter = env::predecessor_account_id();
-
-        // Verify request exists and is in commit phase
-        let request = self.requests.get(&request_id).expect("Request not found");
-        require!(
-            request.phase == VotingPhase::Commit,
-            "Not in commit phase"
+        env::panic_str(
+            "Direct commit disabled. Use ft_transfer_call on voting token with CommitVote action.",
         );
+    }
+
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> U128 {
+        let token = env::predecessor_account_id();
+        require!(
+            self.voting_token.as_ref() == Some(&token),
+            "Only voting token can call ft_on_transfer"
+        );
+        require!(amount.0 > 0, "Stake amount must be positive");
+
+        let parsed: FtOnTransferMsg =
+            near_sdk::serde_json::from_str(&msg).expect("Invalid ft_on_transfer message format");
+
+        match parsed {
+            FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash,
+            } => {
+                self.internal_commit_vote(request_id, sender_id, commit_hash, amount.0);
+            }
+        }
+
+        U128(0)
+    }
+
+    fn internal_commit_vote(
+        &mut self,
+        request_id: CryptoHash,
+        voter: AccountId,
+        commit_hash: CryptoHash,
+        staked_amount: u128,
+    ) {
+        let request = self.requests.get(&request_id).expect("Request not found");
+        require!(request.phase == VotingPhase::Commit, "Not in commit phase");
 
         // Check commit phase hasn't expired
         let now = env::block_timestamp();
@@ -237,12 +310,17 @@ impl Voting {
 
         let commitment = VoteCommitment {
             commit_hash,
-            staked_amount: staked_amount.0,
+            staked_amount,
             revealed: false,
             revealed_price: None,
         };
 
         commitments.insert(voter.clone(), commitment);
+        let voters = self
+            .request_voters
+            .get_mut(&request_id)
+            .expect("Voter list not initialized");
+        voters.push(voter.clone());
 
         // Update total stake
         let total = self
@@ -251,12 +329,12 @@ impl Voting {
             .copied()
             .unwrap_or(0);
         self.total_committed_stake
-            .insert(request_id, total + staked_amount.0);
+            .insert(request_id, total + staked_amount);
 
         VotingEvent::VoteCommitted {
             request_id: &request_id,
             voter: &voter,
-            stake: &staked_amount,
+            stake: &U128(staked_amount),
         }
         .emit();
     }
@@ -273,10 +351,7 @@ impl Voting {
             .expect("Request not found")
             .clone();
 
-        require!(
-            request.phase == VotingPhase::Commit,
-            "Not in commit phase"
-        );
+        require!(request.phase == VotingPhase::Commit, "Not in commit phase");
 
         let now = env::block_timestamp();
         require!(
@@ -306,10 +381,7 @@ impl Voting {
 
         // Verify request exists and is in reveal phase
         let request = self.requests.get(&request_id).expect("Request not found");
-        require!(
-            request.phase == VotingPhase::Reveal,
-            "Not in reveal phase"
-        );
+        require!(request.phase == VotingPhase::Reveal, "Not in reveal phase");
 
         // Check reveal phase hasn't expired
         let now = env::block_timestamp();
@@ -344,6 +416,9 @@ impl Voting {
         commitment.revealed_price = Some(price);
         let stake = U128(commitment.staked_amount);
         commitments.insert(voter.clone(), commitment);
+        let mut mutable_request = request.clone();
+        mutable_request.revealed_stake = mutable_request.revealed_stake.saturating_add(stake.0);
+        self.requests.insert(request_id, mutable_request);
 
         VotingEvent::VoteRevealed {
             request_id: &request_id,
@@ -369,10 +444,7 @@ impl Voting {
             .expect("Request not found")
             .clone();
 
-        require!(
-            request.phase == VotingPhase::Reveal,
-            "Not in reveal phase"
-        );
+        require!(request.phase == VotingPhase::Reveal, "Not in reveal phase");
 
         let now = env::block_timestamp();
         require!(
@@ -380,22 +452,77 @@ impl Voting {
             "Reveal phase not yet ended"
         );
 
-        // Collect revealed votes
-        // Note: In a production version, we'd need to track voters separately
-        // and iterate over all commitments. LookupMap doesn't support iteration.
-        // This is a known limitation - you'd use UnorderedMap or track voter list.
-        let _commitments = self.commitments.get(&request_id).expect("No commitments");
+        let total_committed = self
+            .total_committed_stake
+            .get(&request_id)
+            .copied()
+            .unwrap_or(0);
+        require!(total_committed > 0, "No committed stake");
 
-        // For now, resolve with 0 as placeholder
-        // In production, you'd:
-        // 1. Track voter list per request
-        // 2. Iterate and collect revealed votes
-        // 3. Calculate stake-weighted median
-        let resolved_price = 0i128;
+        let required_participation = total_committed
+            .saturating_mul(self.min_participation_rate as u128)
+            / BASIS_POINTS_DENOMINATOR as u128;
+
+        if request.revealed_stake < required_participation {
+            let committed_u128 = U128(total_committed);
+            let revealed_u128 = U128(request.revealed_stake);
+            let required_u128 = U128(required_participation);
+            if request.low_participation_extensions < self.max_low_participation_extensions {
+                request.low_participation_extensions += 1;
+                request.reveal_start_time = now;
+                self.requests.insert(request_id, request);
+                VotingEvent::LowParticipationTriggered {
+                    request_id: &request_id,
+                    committed_stake: &committed_u128,
+                    revealed_stake: &revealed_u128,
+                    required_stake: &required_u128,
+                    emergency_required: false,
+                }
+                .emit();
+                env::panic_str("Low participation: reveal phase extended");
+            }
+            request.emergency_required = true;
+            self.requests.insert(request_id, request);
+            VotingEvent::LowParticipationTriggered {
+                request_id: &request_id,
+                committed_stake: &committed_u128,
+                revealed_stake: &revealed_u128,
+                required_stake: &required_u128,
+                emergency_required: true,
+            }
+            .emit();
+            env::panic_str("Low participation: emergency resolution required");
+        }
+
+        let commitments = self
+            .commitments
+            .get(&request_id)
+            .expect("Commitments not initialized");
+        let voters = self
+            .request_voters
+            .get(&request_id)
+            .expect("Voter list not initialized")
+            .clone();
+
+        let mut revealed_votes: Vec<(i128, u128, AccountId)> = Vec::new();
+        for voter in voters {
+            if let Some(commitment) = commitments.get(&voter) {
+                if commitment.revealed {
+                    if let Some(price) = commitment.revealed_price {
+                        revealed_votes.push((price, commitment.staked_amount, voter.clone()));
+                    }
+                }
+            }
+        }
+
+        require!(!revealed_votes.is_empty(), "No revealed votes");
+        let resolved_price = Self::stake_weighted_median(&mut revealed_votes);
+        self.distribute_rewards_and_slashing(&request_id, resolved_price, &revealed_votes);
 
         request.phase = VotingPhase::Resolved;
         request.status = RequestStatus::Resolved;
         request.resolved_price = Some(resolved_price);
+        request.emergency_required = false;
         self.requests.insert(request_id, request);
 
         let total_stake = self.get_total_committed_stake(request_id);
@@ -482,6 +609,80 @@ impl Voting {
         )
     }
 
+    pub fn set_voting_token(&mut self, voting_token: AccountId) {
+        self.assert_owner();
+        self.voting_token = Some(voting_token);
+    }
+
+    pub fn set_treasury(&mut self, treasury: AccountId) {
+        self.assert_owner();
+        self.treasury = Some(treasury);
+    }
+
+    pub fn set_slashing_treasury_bps(&mut self, bps: u16) {
+        self.assert_owner();
+        require!(
+            bps <= BASIS_POINTS_DENOMINATOR as u16,
+            "BPS cannot exceed 100%"
+        );
+        self.slashing_treasury_bps = bps;
+    }
+
+    pub fn set_max_low_participation_extensions(&mut self, max_extensions: u8) {
+        self.assert_owner();
+        self.max_low_participation_extensions = max_extensions;
+    }
+
+    pub fn emergency_resolve_price(
+        &mut self,
+        request_id: CryptoHash,
+        resolved_price: i128,
+        reason: String,
+    ) -> i128 {
+        self.assert_owner();
+        let mut request = self
+            .requests
+            .get(&request_id)
+            .expect("Request not found")
+            .clone();
+        require!(
+            request.phase == VotingPhase::Reveal,
+            "Emergency resolve only from reveal phase"
+        );
+        require!(
+            request.emergency_required,
+            "Emergency resolution not enabled for this request"
+        );
+
+        request.phase = VotingPhase::Resolved;
+        request.status = RequestStatus::Resolved;
+        request.resolved_price = Some(resolved_price);
+        request.emergency_required = false;
+        self.requests.insert(request_id, request);
+
+        env::log_str(&format!(
+            "EMERGENCY_RESOLUTION request_id={} resolved_price={} reason={}",
+            hex::encode(request_id),
+            resolved_price,
+            reason
+        ));
+
+        VotingEvent::PriceResolved {
+            request_id: &request_id,
+            resolved_price,
+            total_stake: &self.get_total_committed_stake(request_id),
+        }
+        .emit();
+        VotingEvent::EmergencyPriceResolved {
+            request_id: &request_id,
+            resolved_price,
+            reason: &reason,
+        }
+        .emit();
+
+        resolved_price
+    }
+
     // ==================== Role Management ====================
 
     /// Transfer ownership.
@@ -536,6 +737,104 @@ impl Voting {
             .try_into()
             .expect("Hash should be 32 bytes")
     }
+
+    fn stake_weighted_median(votes: &mut [(i128, u128, AccountId)]) -> i128 {
+        votes.sort_by(|a, b| a.0.cmp(&b.0));
+        let total: u128 = votes.iter().map(|(_, stake, _)| *stake).sum();
+        let midpoint = total / 2 + total % 2;
+        let mut running = 0u128;
+        for (price, stake, _) in votes.iter() {
+            running = running.saturating_add(*stake);
+            if running >= midpoint {
+                return *price;
+            }
+        }
+        votes.last().map(|(price, _, _)| *price).unwrap_or(0)
+    }
+
+    fn distribute_rewards_and_slashing(
+        &self,
+        request_id: &CryptoHash,
+        resolved_price: i128,
+        revealed_votes: &[(i128, u128, AccountId)],
+    ) {
+        let Some(voting_token) = self.voting_token.clone() else {
+            return;
+        };
+        let Some(treasury) = self.treasury.clone() else {
+            return;
+        };
+
+        let commitments = self
+            .commitments
+            .get(request_id)
+            .expect("Commitments not initialized");
+        let voters = self
+            .request_voters
+            .get(request_id)
+            .expect("Voter list not initialized")
+            .clone();
+
+        let winner_stake: u128 = revealed_votes
+            .iter()
+            .filter(|(price, _, _)| *price == resolved_price)
+            .map(|(_, stake, _)| *stake)
+            .sum();
+        let mut total_slashed = 0u128;
+        for voter in &voters {
+            if let Some(commitment) = commitments.get(voter) {
+                let is_winner =
+                    commitment.revealed && commitment.revealed_price == Some(resolved_price);
+                if !is_winner {
+                    total_slashed = total_slashed.saturating_add(commitment.staked_amount);
+                }
+            }
+        }
+        if total_slashed > 0 {
+            let treasury_cut = total_slashed.saturating_mul(self.slashing_treasury_bps as u128)
+                / BASIS_POINTS_DENOMINATOR as u128;
+            let reward_pool = total_slashed.saturating_sub(treasury_cut);
+            self.transfer_ft(voting_token.clone(), treasury, treasury_cut);
+
+            for (price, stake, voter) in revealed_votes {
+                if *price == resolved_price {
+                    let reward = if winner_stake > 0 {
+                        reward_pool.saturating_mul(*stake) / winner_stake
+                    } else {
+                        0
+                    };
+                    self.transfer_ft(
+                        voting_token.clone(),
+                        voter.clone(),
+                        stake.saturating_add(reward),
+                    );
+                }
+            }
+        } else {
+            for (price, stake, voter) in revealed_votes {
+                if *price == resolved_price {
+                    self.transfer_ft(voting_token.clone(), voter.clone(), *stake);
+                }
+            }
+        }
+    }
+
+    fn transfer_ft(&self, token: AccountId, receiver_id: AccountId, amount: u128) {
+        if amount == 0 {
+            return;
+        }
+        let _ = Promise::new(token).function_call(
+            "ft_transfer".to_string(),
+            near_sdk::serde_json::json!({
+                "receiver_id": receiver_id,
+                "amount": U128(amount),
+            })
+            .to_string()
+            .into_bytes(),
+            NearToken::from_yoctonear(1),
+            GAS_FOR_FT_TRANSFER,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -543,16 +842,31 @@ mod tests {
     use super::*;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::testing_env;
+    const TOKEN_ACCOUNT: &str = "token.testnet";
+    const TREASURY_ACCOUNT: &str = "treasury.testnet";
 
-    fn get_context(predecessor: AccountId) -> VMContextBuilder {
+    fn account(id: &str) -> AccountId {
+        id.parse().unwrap()
+    }
+
+    fn get_context(predecessor: AccountId, block_timestamp: u64) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
-        builder.predecessor_account_id(predecessor);
         builder
+            .predecessor_account_id(predecessor)
+            .block_timestamp(block_timestamp);
+        builder
+    }
+
+    fn setup_contract() -> Voting {
+        let mut contract = Voting::new(accounts(0));
+        contract.set_voting_token(account(TOKEN_ACCOUNT));
+        contract.set_treasury(account(TREASURY_ACCOUNT));
+        contract
     }
 
     #[test]
     fn test_new() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let contract = Voting::new(accounts(0));
@@ -566,95 +880,94 @@ mod tests {
 
     #[test]
     fn test_request_price() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test claim".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test claim".to_vec());
 
         let request = contract.get_request(request_id).unwrap();
         assert_eq!(request.identifier, "YES_OR_NO_QUERY");
         assert_eq!(request.timestamp, 1000);
         assert_eq!(request.status, RequestStatus::Active);
         assert_eq!(request.phase, VotingPhase::Commit);
+        assert_eq!(request.revealed_stake, 0);
     }
 
     #[test]
     fn test_multiple_requests_same_params() {
         // Each request gets a unique nonce, so same parameters can create
         // multiple price requests (this is valid behavior)
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        let request_id_1 = contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
-        let request_id_2 = contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
+        let request_id_1 =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
+        let request_id_2 =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
         // They should have different IDs
         assert_ne!(request_id_1, request_id_2);
     }
 
     #[test]
-    fn test_commit_vote() {
-        let context = get_context(accounts(0));
+    fn test_commit_vote_via_ft_transfer_call() {
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
-        let mut contract = Voting::new(accounts(0));
+        let mut contract = setup_contract();
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
-        // Voter commits
-        testing_env!(get_context(accounts(1)).build());
-        let commit_hash: CryptoHash = [1u8; 32];
-        contract.commit_vote(request_id, commit_hash, U128(1000));
+        let salt = [7u8; 32];
+        let commit_hash = Voting::compute_vote_hash_static(1_000, salt);
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        let msg = near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+            request_id,
+            commit_hash,
+        })
+        .unwrap();
+        contract.ft_on_transfer(accounts(1), U128(1_000), msg);
 
         assert_eq!(contract.get_total_committed_stake(request_id).0, 1000);
     }
 
     #[test]
-    #[should_panic(expected = "Already committed a vote")]
-    fn test_double_commit() {
-        let context = get_context(accounts(0));
+    #[should_panic(expected = "Only voting token can call ft_on_transfer")]
+    fn test_commit_wrong_token_rejected() {
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
-        let mut contract = Voting::new(accounts(0));
+        let mut contract = setup_contract();
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
-        testing_env!(get_context(accounts(1)).build());
-        let commit_hash: CryptoHash = [1u8; 32];
-        contract.commit_vote(request_id, commit_hash, U128(1000));
-        // Second commit should fail
-        contract.commit_vote(request_id, commit_hash, U128(1000));
+        let salt = [9u8; 32];
+        let commit_hash = Voting::compute_vote_hash_static(1_000, salt);
+        testing_env!(get_context(accounts(1), 1).build());
+        let msg = near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+            request_id,
+            commit_hash,
+        })
+        .unwrap();
+        contract.ft_on_transfer(accounts(1), U128(1_000), msg);
     }
 
     #[test]
     fn test_advance_to_reveal() {
-        let mut context = get_context(accounts(0));
-        context.block_timestamp(0);
+        let mut context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
         // Fast forward past commit phase
         context.block_timestamp(DEFAULT_COMMIT_DURATION + 1);
@@ -669,17 +982,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "Commit phase not yet ended")]
     fn test_advance_too_early() {
-        let mut context = get_context(accounts(0));
-        context.block_timestamp(0);
+        let mut context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
         // Try to advance before commit phase ends
         context.block_timestamp(1000);
@@ -690,7 +999,7 @@ mod tests {
 
     #[test]
     fn test_set_config() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
@@ -708,18 +1017,18 @@ mod tests {
     #[test]
     #[should_panic(expected = "Only owner can call this method")]
     fn test_set_config_unauthorized() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        testing_env!(get_context(accounts(1)).build());
+        testing_env!(get_context(accounts(1), 0).build());
         contract.set_commit_phase_duration(100);
     }
 
     #[test]
     fn test_transfer_ownership() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
@@ -728,24 +1037,149 @@ mod tests {
         assert_eq!(contract.get_owner(), accounts(1));
 
         // New owner can set config
-        testing_env!(get_context(accounts(1)).build());
+        testing_env!(get_context(accounts(1), 0).build());
         contract.set_commit_phase_duration(100);
     }
 
     #[test]
     fn test_has_price() {
-        let context = get_context(accounts(0));
+        let context = get_context(accounts(0), 0);
         testing_env!(context.build());
 
         let mut contract = Voting::new(accounts(0));
 
-        let request_id = contract.request_price(
-            "YES_OR_NO_QUERY".to_string(),
-            1000,
-            b"test".to_vec(),
-        );
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
 
         // Not resolved yet
         assert!(!contract.has_price(request_id));
+    }
+
+    #[test]
+    fn test_resolve_price_weighted_median() {
+        testing_env!(get_context(accounts(0), 0).build());
+        let mut contract = setup_contract();
+        contract.set_min_participation_rate(0);
+
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
+
+        let v1_salt = [1u8; 32];
+        let v2_salt = [2u8; 32];
+        let v3_salt = [3u8; 32];
+        let v1_hash = Voting::compute_vote_hash_static(0, v1_salt);
+        let v2_hash = Voting::compute_vote_hash_static(1, v2_salt);
+        let v3_hash = Voting::compute_vote_hash_static(1, v3_salt);
+
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        contract.ft_on_transfer(
+            accounts(1),
+            U128(100),
+            near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash: v1_hash,
+            })
+            .unwrap(),
+        );
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        contract.ft_on_transfer(
+            accounts(2),
+            U128(400),
+            near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash: v2_hash,
+            })
+            .unwrap(),
+        );
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        contract.ft_on_transfer(
+            accounts(3),
+            U128(500),
+            near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash: v3_hash,
+            })
+            .unwrap(),
+        );
+
+        testing_env!(get_context(accounts(0), DEFAULT_COMMIT_DURATION + 2).build());
+        contract.advance_to_reveal(request_id);
+
+        testing_env!(get_context(accounts(1), DEFAULT_COMMIT_DURATION + 3).build());
+        contract.reveal_vote(request_id, 0, v1_salt);
+        testing_env!(get_context(accounts(2), DEFAULT_COMMIT_DURATION + 4).build());
+        contract.reveal_vote(request_id, 1, v2_salt);
+        testing_env!(get_context(accounts(3), DEFAULT_COMMIT_DURATION + 5).build());
+        contract.reveal_vote(request_id, 1, v3_salt);
+
+        testing_env!(get_context(
+            accounts(0),
+            DEFAULT_COMMIT_DURATION + DEFAULT_REVEAL_DURATION + 10
+        )
+        .build());
+        let resolved = contract.resolve_price(request_id);
+        assert_eq!(resolved, 1);
+        assert!(contract.has_price(request_id));
+    }
+
+    #[test]
+    fn test_low_participation_requires_emergency() {
+        testing_env!(get_context(accounts(0), 0).build());
+        let mut contract = setup_contract();
+        contract.set_min_participation_rate(9_000);
+        contract.set_max_low_participation_extensions(0);
+
+        let request_id =
+            contract.request_price("YES_OR_NO_QUERY".to_string(), 1000, b"test".to_vec());
+        let salt = [1u8; 32];
+        let hash = Voting::compute_vote_hash_static(1, salt);
+
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        contract.ft_on_transfer(
+            accounts(1),
+            U128(100),
+            near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash: hash,
+            })
+            .unwrap(),
+        );
+        testing_env!(get_context(account(TOKEN_ACCOUNT), 1).build());
+        contract.ft_on_transfer(
+            accounts(2),
+            U128(900),
+            near_sdk::serde_json::to_string(&FtOnTransferMsg::CommitVote {
+                request_id,
+                commit_hash: Voting::compute_vote_hash_static(0, [2u8; 32]),
+            })
+            .unwrap(),
+        );
+
+        testing_env!(get_context(accounts(0), DEFAULT_COMMIT_DURATION + 2).build());
+        contract.advance_to_reveal(request_id);
+        testing_env!(get_context(accounts(1), DEFAULT_COMMIT_DURATION + 3).build());
+        contract.reveal_vote(request_id, 1, salt);
+
+        testing_env!(get_context(
+            accounts(0),
+            DEFAULT_COMMIT_DURATION + DEFAULT_REVEAL_DURATION + 10
+        )
+        .build());
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.resolve_price(request_id);
+        }));
+        assert!(failed.is_err());
+        let req = contract.get_request(request_id).unwrap();
+        assert!(req.emergency_required);
+
+        testing_env!(get_context(
+            accounts(0),
+            DEFAULT_COMMIT_DURATION + DEFAULT_REVEAL_DURATION + 11
+        )
+        .build());
+        let emergency =
+            contract.emergency_resolve_price(request_id, 0, "Low participation".to_string());
+        assert_eq!(emergency, 0);
+        assert!(contract.has_price(request_id));
     }
 }

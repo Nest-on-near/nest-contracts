@@ -3,7 +3,7 @@
 //! This module defines the core data structures used by the oracle and the
 //! trait interface that the oracle contract implements.
 
-use near_sdk::json_types::{U64, U128};
+use near_sdk::json_types::{U128, U64};
 use near_sdk::{near, AccountId};
 
 use crate::types::Bytes32;
@@ -107,11 +107,7 @@ pub trait OptimisticOracle {
     ///
     /// * `assertion_id` - The assertion to dispute
     /// * `disputer` - Account to credit if the dispute succeeds
-    fn dispute_assertion(
-        &mut self,
-        assertion_id: Bytes32,
-        disputer: AccountId,
-    );
+    fn dispute_assertion(&mut self, assertion_id: Bytes32, disputer: AccountId);
 
     /// Returns the default identifier used for assertions (ASSERT_TRUTH).
     fn default_identifier(&self) -> Bytes32;
@@ -139,11 +135,7 @@ pub trait OptimisticOracle {
     /// # Returns
     ///
     /// The unique identifier for the created assertion.
-    fn assert_truth_with_defaults(
-        &mut self,
-        claim: Bytes32,
-        asserter: AccountId,
-    ) -> Bytes32;
+    fn assert_truth_with_defaults(&mut self, claim: Bytes32, asserter: AccountId) -> Bytes32;
 
     /// Create an assertion with full parameter control.
     ///
@@ -206,10 +198,7 @@ pub trait OptimisticOracle {
     /// # Returns
     ///
     /// `true` if the assertion was truthful, `false` otherwise.
-    fn settle_and_get_assertion_result(
-        &mut self,
-        assertion_id: Bytes32,
-    ) -> bool;
+    fn settle_and_get_assertion_result(&mut self, assertion_id: Bytes32) -> bool;
 
     /// Get the resolution of a settled assertion.
     ///
@@ -220,10 +209,7 @@ pub trait OptimisticOracle {
     /// # Returns
     ///
     /// The resolution if the assertion is settled, None otherwise.
-    fn get_assertion_result(
-        &self,
-        assertion_id: Bytes32,
-    ) -> Option<bool>;
+    fn get_assertion_result(&self, assertion_id: Bytes32) -> Option<bool>;
 
     /// Get the minimum bond required for a currency.
     ///
@@ -236,8 +222,5 @@ pub trait OptimisticOracle {
     /// # Returns
     ///
     /// The minimum bond amount, or 0 if the currency is not whitelisted.
-    fn get_minimum_bond(
-        &self,
-        currency: AccountId,
-    ) -> U128;
+    fn get_minimum_bond(&self, currency: AccountId) -> U128;
 }

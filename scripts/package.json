@@ -4,7 +4,8 @@
   "description": "JavaScript scripts for testing the NEST Optimistic Oracle on NEAR",
   "type": "module",
   "scripts": {
-    "test:oracle": "node src/test-oracle-flow.js"
+    "test:oracle": "node src/test-oracle-flow.js",
+    "test:market-dvm": "node src/test-market-dvm-flow.js"
   },
   "dependencies": {
     "near-api-js": "^4.0.0",

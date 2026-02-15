@@ -59,8 +59,7 @@ impl SlashingLibrary {
     /// The amount to slash from wrong voters
     pub fn calculate_slashing(&self, wrong_vote_total_stake: U128) -> U128 {
         let stake = wrong_vote_total_stake.0;
-        let slashing_amount =
-            (stake * self.base_slashing_rate as u128) / BASIS_POINTS_DENOMINATOR;
+        let slashing_amount = (stake * self.base_slashing_rate as u128) / BASIS_POINTS_DENOMINATOR;
         U128(slashing_amount)
     }
 
@@ -278,8 +277,8 @@ mod tests {
         let contract = SlashingLibrary::new(accounts(0), 1000); // 10%
 
         let result = contract.calculate_slashing_with_context(
-            U128(1000), // wrong votes
-            U128(9000), // correct votes
+            U128(1000),  // wrong votes
+            U128(9000),  // correct votes
             U128(10000), // total stake
         );
         assert_eq!(result.0, 100); // 10% of wrong votes

@@ -5,12 +5,7 @@
 //!
 //! Reference: https://nomicon.io/Standards/EventsFormat
 
-use near_sdk::{
-    AccountId, log,
-    serde::Serialize,
-    serde_json::json,
-    json_types::U128,
-};
+use near_sdk::{json_types::U128, log, serde::Serialize, serde_json::json, AccountId};
 
 use crate::types::{Bytes32, CryptoHash};
 
@@ -183,6 +178,30 @@ pub enum VotingEvent<'a> {
         commit_phase_duration_ns: u64,
         /// New reveal phase duration in nanoseconds.
         reveal_phase_duration_ns: u64,
+    },
+
+    /// Emitted when participation is too low to finalize normally.
+    LowParticipationTriggered {
+        /// The affected request.
+        request_id: &'a CryptoHash,
+        /// Total committed stake for the request.
+        committed_stake: &'a U128,
+        /// Revealed stake observed at resolution time.
+        revealed_stake: &'a U128,
+        /// Minimum revealed stake required for normal resolution.
+        required_stake: &'a U128,
+        /// True if the request moved to emergency-only path.
+        emergency_required: bool,
+    },
+
+    /// Emitted when owner executes emergency-only manual resolution.
+    EmergencyPriceResolved {
+        /// Request resolved via emergency path.
+        request_id: &'a CryptoHash,
+        /// Price chosen by emergency decision.
+        resolved_price: i128,
+        /// Human-readable reason recorded for auditability.
+        reason: &'a str,
     },
 }
 

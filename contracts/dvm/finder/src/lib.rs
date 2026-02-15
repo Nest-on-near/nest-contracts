@@ -1,7 +1,6 @@
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, PanicOnDefault};
 
-
 /// Well-known interface names used by the DVM system.
 /// These are string constants that get hashed/used as keys.
 pub mod interface_names {

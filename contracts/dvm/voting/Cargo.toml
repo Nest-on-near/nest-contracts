@@ -34,6 +34,7 @@ container_build_command = [
 [dependencies]
 near-sdk.workspace = true
 oracle-types = { path = "../../../crates/oracle-types" }
+hex = "0.4"
 
 [dev-dependencies]
 near-sdk = { workspace = true, features = ["unit-testing"] }

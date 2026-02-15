@@ -1,7 +1,9 @@
 use near_sdk::{
-    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise,
+    env,
     json_types::U128,
+    near, require,
     serde::{Deserialize, Serialize},
+    AccountId, Gas, NearToken, PanicOnDefault, Promise,
 };
 use oracle_types::types::Bytes32;
 
@@ -79,12 +81,7 @@ impl AssertionExample {
     /// - msg: JSON with claim string, e.g. {"claim": "Today is 18th January"}
     ///
     /// Returns "0" to indicate all tokens were used (no refund)
-    pub fn ft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        amount: U128,
-        msg: String,
-    ) -> Promise {
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> Promise {
         let token = env::predecessor_account_id();
 
         // Verify it's the correct bond token
@@ -94,10 +91,7 @@ impl AssertionExample {
         );
 
         // Verify minimum bond
-        require!(
-            amount.0 >= self.min_bond.0,
-            "Bond amount too low"
-        );
+        require!(amount.0 >= self.min_bond.0, "Bond amount too low");
 
         // Parse the user's message
         let user_msg: UserAssertionMsg = serde_json::from_str(&msg)
@@ -128,27 +122,22 @@ impl AssertionExample {
         });
 
         // Forward the tokens to the oracle
-        Promise::new(self.bond_token.clone())
-            .function_call(
-                "ft_transfer_call".to_string(),
-                serde_json::json!({
-                    "receiver_id": self.oracle,
-                    "amount": amount,
-                    "msg": serde_json::to_string(&oracle_msg).unwrap(),
-                })
-                .to_string()
-                .into_bytes(),
-                NearToken::from_yoctonear(1),
-                GAS_FOR_FT_TRANSFER_CALL,
-            )
+        Promise::new(self.bond_token.clone()).function_call(
+            "ft_transfer_call".to_string(),
+            serde_json::json!({
+                "receiver_id": self.oracle,
+                "amount": amount,
+                "msg": serde_json::to_string(&oracle_msg).unwrap(),
+            })
+            .to_string()
+            .into_bytes(),
+            NearToken::from_yoctonear(1),
+            GAS_FOR_FT_TRANSFER_CALL,
+        )
     }
 
     /// Callback function called by the oracle when an assertion is resolved
-    pub fn assertion_resolved_callback(
-        &mut self,
-        assertion_id: String,
-        asserted_truthfully: bool,
-    ) {
+    pub fn assertion_resolved_callback(&mut self, assertion_id: String, asserted_truthfully: bool) {
         require!(
             env::predecessor_account_id() == self.oracle,
             "Only oracle can call this callback"

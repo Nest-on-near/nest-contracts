@@ -452,7 +452,10 @@ async fn test_full_dvm_dispute_flow() -> Result<(), Box<dyn std::error::Error>> 
         .json()?;
 
     assert!(voting_contract.is_some(), "Voting contract should be set");
-    println!("✅ VERIFY: Oracle is configured with DVM voting contract: {}", voting_contract.unwrap());
+    println!(
+        "✅ VERIFY: Oracle is configured with DVM voting contract: {}",
+        voting_contract.unwrap()
+    );
 
     println!("\n═══════════════════════════════════════════════════════════════");
     println!("  TEST PASSED: Full DVM integration configured and working!");

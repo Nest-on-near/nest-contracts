@@ -31,6 +31,61 @@ The Oracle now has **full DVM integration** - when assertions are disputed, they
 
 ## Scripts
 
+### test-market-dvm-flow.js
+
+One-command E2E runner for the prediction-market dispute path:
+1. Create market
+2. Buy YES and NO
+3. Submit resolution
+4. Dispute at oracle
+5. Commit + reveal DVM votes with stake (`ft_transfer_call`)
+6. Resolve DVM price
+7. Settle oracle assertion and verify market settlement
+
+```bash
+npm run test:market-dvm
+```
+
+Quick start:
+
+```bash
+cp .env.market-dvm.example .env
+npm run test:market-dvm
+```
+
+Required env vars for this script:
+
+```bash
+NETWORK=testnet-fastnear
+MARKET_CONTRACT=market5-260214.nest-creator-260214a.testnet
+ORACLE_CONTRACT=oracle5-260214.nest-creator-260214a.testnet
+VOTING_CONTRACT=nest-voting-3.testnet
+OUTCOME_TOKEN_CONTRACT=outcome5-260214.nest-creator-260214a.testnet
+USDC_CONTRACT=nusd-1.testnet
+VOTING_TOKEN_CONTRACT=nest-token-1.testnet
+
+CREATOR_ACCOUNT=...
+TRADER_YES_ACCOUNT=...
+TRADER_NO_ACCOUNT=...
+DISPUTER_ACCOUNT=...
+VOTER1_ACCOUNT=...
+VOTER2_ACCOUNT=...
+```
+
+Optional toggles:
+
+```bash
+# speed up voting phases (owner-only on voting contract)
+SET_FAST_VOTING=1
+VOTING_OWNER_ACCOUNT=oracle5-260214.nest-creator-260214a.testnet
+COMMIT_DURATION_NS=120000000000
+REVEAL_DURATION_NS=120000000000
+
+# also run undisputed branch (waits full oracle liveness from market flow)
+RUN_UNDISPUTED_BRANCH=1
+UNDISPUTED_SETTLER_ACCOUNT=...
+```
+
 ### test-oracle-flow.js
 
 Full end-to-end test that:
@@ -137,11 +192,12 @@ node settle-assertion.js '[1,2,3,4,...,32]'
 
 | Contract | Address |
 |----------|---------|
-| Oracle | `nest-oracle-3.testnet` |
+| Oracle | `oracle5-260214.nest-creator-260214a.testnet` |
 | Token | `nest-token-1.testnet` |
-| Voting | `nest-voting-1.testnet` |
-| Finder | `nest-finder-1.testnet` |
-| Store | `nest-store-1.testnet` |
+| Voting | `nest-voting-3.testnet` |
+| Market | `market5-260214.nest-creator-260214a.testnet` |
+| Outcome Token | `outcome5-260214.nest-creator-260214a.testnet` |
+| USDC | `nusd-1.testnet` |
 
 ## Notes
 

@@ -1,8 +1,10 @@
 use near_sdk::{
-    env, near, require, AccountId, PanicOnDefault, Promise, PromiseError, Gas, NearToken, CryptoHash,
-    store::LookupMap,
-    json_types::{U64, U128},
+    env,
+    json_types::{U128, U64},
+    near, require,
     serde::{Deserialize, Serialize},
+    store::LookupMap,
+    AccountId, CryptoHash, Gas, NearToken, PanicOnDefault, Promise, PromiseError,
 };
 
 /// Gas for cross-contract calls
@@ -14,9 +16,9 @@ const GAS_FOR_DVM_GET_PRICE: Gas = Gas::from_tgas(10);
 const GAS_FOR_SETTLE_CALLBACK: Gas = Gas::from_tgas(80);
 
 use oracle_types::{
-    types::Bytes32,
-    interfaces::{Assertion, EscalationManagerSettings, WhitelistedCurrency},
     events::Event,
+    interfaces::{Assertion, EscalationManagerSettings, WhitelistedCurrency},
+    types::Bytes32,
 };
 
 // ============================================================================
@@ -58,10 +60,16 @@ pub struct AssertTruthArgs {
     pub escalation_manager: Option<AccountId>,
     /// Liveness period in nanoseconds (if None, uses default)
     pub liveness_ns: Option<U64>,
+    /// Optional assertion timestamp in nanoseconds used for deterministic assertion IDs.
+    /// If omitted, oracle uses current block timestamp (legacy behavior).
+    pub assertion_time_ns: Option<U64>,
     /// Identifier for the assertion (if None, uses default)
     pub identifier: Option<Bytes32>,
     /// Optional domain ID for grouping assertions
     pub domain_id: Option<Bytes32>,
+    /// Optional deterministic assertion id supplied by an upstream integrator.
+    /// If provided, the oracle uses it directly instead of recomputing from inputs.
+    pub assertion_id_override: Option<Bytes32>,
 }
 
 /// Message types for ft_on_transfer
@@ -164,7 +172,8 @@ impl NestOptimisticOracle {
             default_currency: &default_currency,
             default_liveness_ns: liveness,
             burned_bond_percentage: burn_pct,
-        }.emit();
+        }
+        .emit();
 
         contract
     }
@@ -210,13 +219,13 @@ impl NestOptimisticOracle {
 
     /// Fetches the resolution of a specific assertion
     pub fn get_assertion_result(&self, assertion_id: Bytes32) -> bool {
-        let assertion = self.assertions.get(&assertion_id)
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
             .expect("Assertion does not exist");
 
         // Return early if not using answer from resolved dispute (discardOracle = true)
-        if assertion.disputer.is_some()
-            && assertion.escalation_manager_settings.discard_oracle
-        {
+        if assertion.disputer.is_some() && assertion.escalation_manager_settings.discard_oracle {
             return false;
         }
 
@@ -226,7 +235,10 @@ impl NestOptimisticOracle {
 
     /// Check if an identifier is cached/approved
     pub fn is_identifier_supported(&self, identifier: Bytes32) -> bool {
-        self.cached_identifiers.get(&identifier).copied().unwrap_or(false)
+        self.cached_identifiers
+            .get(&identifier)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Check if a currency is whitelisted
@@ -266,7 +278,10 @@ impl NestOptimisticOracle {
     ) {
         self.assert_owner();
 
-        require!(burned_bond_percentage.0 <= SCALE, "Burned bond percentage > 100%");
+        require!(
+            burned_bond_percentage.0 <= SCALE,
+            "Burned bond percentage > 100%"
+        );
         require!(burned_bond_percentage.0 > 0, "Burned bond percentage is 0");
 
         self.default_currency = default_currency.clone();
@@ -277,7 +292,8 @@ impl NestOptimisticOracle {
             default_currency: &default_currency,
             default_liveness_ns: default_liveness_ns.0,
             burned_bond_percentage: burned_bond_percentage.0,
-        }.emit();
+        }
+        .emit();
     }
 
     /// Whitelist a currency with its final fee (Phase 1 simplified)
@@ -311,17 +327,12 @@ impl NestOptimisticOracle {
 
     /// Called by NEP-141 token contract when tokens are transferred via ft_transfer_call
     /// Returns the amount of tokens to refund (0 if all tokens are used)
-    pub fn ft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        amount: U128,
-        msg: String,
-    ) -> U128 {
+    pub fn ft_on_transfer(&mut self, sender_id: AccountId, amount: U128, msg: String) -> U128 {
         let currency = env::predecessor_account_id();
 
         // Parse the message to determine the action
-        let parsed_msg: FtOnTransferMsg = near_sdk::serde_json::from_str(&msg)
-            .expect("Invalid ft_on_transfer message format");
+        let parsed_msg: FtOnTransferMsg =
+            near_sdk::serde_json::from_str(&msg).expect("Invalid ft_on_transfer message format");
 
         match parsed_msg {
             FtOnTransferMsg::AssertTruth(args) => {
@@ -331,16 +342,21 @@ impl NestOptimisticOracle {
                     args.callback_recipient,
                     args.escalation_manager,
                     args.liveness_ns.map(|l| l.0),
+                    args.assertion_time_ns.map(|t| t.0),
                     currency,
                     amount.0,
                     args.identifier,
                     args.domain_id,
+                    args.assertion_id_override,
                     sender_id,
                 );
                 // All tokens used for bond, no refund
                 U128(0)
             }
-            FtOnTransferMsg::DisputeAssertion { assertion_id, disputer } => {
+            FtOnTransferMsg::DisputeAssertion {
+                assertion_id,
+                disputer,
+            } => {
                 self.internal_dispute_assertion(
                     assertion_id,
                     disputer,
@@ -367,29 +383,33 @@ impl NestOptimisticOracle {
         callback_recipient: Option<AccountId>,
         escalation_manager: Option<AccountId>,
         liveness_ns: Option<u64>,
+        assertion_time_ns: Option<u64>,
         currency: AccountId,
         bond: u128,
         identifier: Option<Bytes32>,
         domain_id: Option<Bytes32>,
+        assertion_id_override: Option<Bytes32>,
         caller: AccountId,
     ) -> Bytes32 {
-        let time = self.get_current_time();
+        let time = assertion_time_ns.unwrap_or_else(|| self.get_current_time());
         let liveness = liveness_ns.unwrap_or(self.default_liveness_ns);
         let identifier = identifier.unwrap_or(DEFAULT_IDENTIFIER);
         let domain_id = domain_id.unwrap_or([0u8; 32]);
 
-        // Generate unique assertion ID
-        let assertion_id = self.get_assertion_id(
-            &claim,
-            bond,
-            time,
-            liveness,
-            &currency,
-            &callback_recipient,
-            &escalation_manager,
-            &identifier,
-            &caller,
-        );
+        // Generate unique assertion ID (or accept integrator-provided deterministic override)
+        let assertion_id = assertion_id_override.unwrap_or_else(|| {
+            self.get_assertion_id(
+                &claim,
+                bond,
+                time,
+                liveness,
+                &currency,
+                &callback_recipient,
+                &escalation_manager,
+                &identifier,
+                &caller,
+            )
+        });
 
         // Validations (equivalent to Solidity requires)
         require!(
@@ -397,11 +417,17 @@ impl NestOptimisticOracle {
             "Assertion already exists"
         );
         require!(
-            self.cached_identifiers.get(&identifier).copied().unwrap_or(false),
+            self.cached_identifiers
+                .get(&identifier)
+                .copied()
+                .unwrap_or(false),
             "Unsupported identifier"
         );
         require!(
-            self.cached_currencies.get(&currency).map(|c| c.is_whitelisted).unwrap_or(false),
+            self.cached_currencies
+                .get(&currency)
+                .map(|c| c.is_whitelisted)
+                .unwrap_or(false),
             "Unsupported currency"
         );
         let min_bond = self.get_minimum_bond(currency.clone()).0;
@@ -444,7 +470,8 @@ impl NestOptimisticOracle {
             currency: &currency,
             bond: &U128(bond),
             identifier: &identifier,
-        }.emit();
+        }
+        .emit();
 
         assertion_id
     }
@@ -461,7 +488,9 @@ impl NestOptimisticOracle {
     ) {
         let current_time = self.get_current_time();
 
-        let assertion = self.assertions.get_mut(&assertion_id)
+        let assertion = self
+            .assertions
+            .get_mut(&assertion_id)
             .expect("Assertion does not exist");
 
         require!(assertion.disputer.is_none(), "Assertion already disputed");
@@ -469,14 +498,8 @@ impl NestOptimisticOracle {
             assertion.expiration_time_ns > current_time,
             "Assertion is expired"
         );
-        require!(
-            assertion.currency == currency,
-            "Wrong currency for dispute"
-        );
-        require!(
-            bond_amount >= assertion.bond.0,
-            "Dispute bond too low"
-        );
+        require!(assertion.currency == currency, "Wrong currency for dispute");
+        require!(bond_amount >= assertion.bond.0, "Dispute bond too low");
 
         // Store the identifier before we release the borrow
         let identifier = assertion.identifier;
@@ -489,7 +512,8 @@ impl NestOptimisticOracle {
             assertion_id: &assertion_id,
             caller: &env::predecessor_account_id(),
             disputer: &disputer,
-        }.emit();
+        }
+        .emit();
 
         // Escalate to DVM if voting contract is configured
         if let Some(ref voting_contract) = self.voting_contract {
@@ -516,17 +540,16 @@ impl NestOptimisticOracle {
                     GAS_FOR_DVM_REQUEST,
                 )
                 .then(
-                    Promise::new(env::current_account_id())
-                        .function_call(
-                            "on_dvm_request_complete".to_string(),
-                            near_sdk::serde_json::json!({
-                                "assertion_id": assertion_id,
-                            })
-                            .to_string()
-                            .into_bytes(),
-                            NearToken::from_yoctonear(0),
-                            GAS_FOR_DVM_CALLBACK,
-                        )
+                    Promise::new(env::current_account_id()).function_call(
+                        "on_dvm_request_complete".to_string(),
+                        near_sdk::serde_json::json!({
+                            "assertion_id": assertion_id,
+                        })
+                        .to_string()
+                        .into_bytes(),
+                        NearToken::from_yoctonear(0),
+                        GAS_FOR_DVM_CALLBACK,
+                    ),
                 );
         }
     }
@@ -566,7 +589,9 @@ impl NestOptimisticOracle {
         let current_time = self.get_current_time();
 
         // Get assertion and validate
-        let assertion = self.assertions.get(&assertion_id)
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
             .expect("Assertion does not exist")
             .clone();
 
@@ -607,13 +632,16 @@ impl NestOptimisticOracle {
                 disputed: false,
                 settlement_resolution: true,
                 settle_caller: &env::predecessor_account_id(),
-            }.emit();
+            }
+            .emit();
         } else {
             // Disputed - check if DVM has resolved this
             let request_id = self.dispute_requests.get(&assertion_id)
                 .expect("Dispute not escalated to DVM - use resolve_disputed_assertion for manual resolution");
 
-            let voting_contract = self.voting_contract.clone()
+            let voting_contract = self
+                .voting_contract
+                .clone()
                 .expect("Voting contract not configured");
 
             // Query DVM for resolution and settle in callback
@@ -629,17 +657,16 @@ impl NestOptimisticOracle {
                     GAS_FOR_DVM_GET_PRICE,
                 )
                 .then(
-                    Promise::new(env::current_account_id())
-                        .function_call(
-                            "on_dvm_price_received".to_string(),
-                            near_sdk::serde_json::json!({
-                                "assertion_id": assertion_id,
-                            })
-                            .to_string()
-                            .into_bytes(),
-                            NearToken::from_yoctonear(0),
-                            GAS_FOR_SETTLE_CALLBACK,
-                        )
+                    Promise::new(env::current_account_id()).function_call(
+                        "on_dvm_price_received".to_string(),
+                        near_sdk::serde_json::json!({
+                            "assertion_id": assertion_id,
+                        })
+                        .to_string()
+                        .into_bytes(),
+                        NearToken::from_yoctonear(0),
+                        GAS_FOR_SETTLE_CALLBACK,
+                    ),
                 );
         }
     }
@@ -670,7 +697,9 @@ impl NestOptimisticOracle {
     /// Settles an assertion and returns the resolution
     /// Equivalent to: function settleAndGetAssertionResult(bytes32 assertionId) external returns (bool)
     pub fn settle_and_get_assertion_result(&mut self, assertion_id: Bytes32) -> bool {
-        let assertion = self.assertions.get(&assertion_id)
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
             .expect("Assertion does not exist");
 
         if !assertion.settled {
@@ -690,7 +719,9 @@ impl NestOptimisticOracle {
     ) {
         self.assert_owner();
 
-        let assertion = self.assertions.get(&assertion_id)
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
             .expect("Assertion does not exist");
 
         require!(!assertion.settled, "Assertion already settled");
@@ -710,7 +741,9 @@ impl NestOptimisticOracle {
         assertion_id: Bytes32,
         resolution: bool, // true = asserter wins, false = disputer wins
     ) {
-        let assertion = self.assertions.get(&assertion_id)
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
             .expect("Assertion does not exist")
             .clone();
 
@@ -735,11 +768,7 @@ impl NestOptimisticOracle {
         };
 
         // Transfer oracle fee to owner (in production, this goes to Store contract)
-        let _ = self.transfer_tokens(
-            assertion.currency.clone(),
-            self.owner.clone(),
-            oracle_fee,
-        );
+        let _ = self.transfer_tokens(assertion.currency.clone(), self.owner.clone(), oracle_fee);
 
         // Transfer remaining bonds to winner
         let _ = self.transfer_tokens(
@@ -766,7 +795,8 @@ impl NestOptimisticOracle {
             disputed: true,
             settlement_resolution: resolution,
             settle_caller: &env::predecessor_account_id(),
-        }.emit();
+        }
+        .emit();
     }
 
     // ========================================================================
@@ -775,18 +805,17 @@ impl NestOptimisticOracle {
 
     /// Transfer NEP-141 tokens
     fn transfer_tokens(&self, token: AccountId, recipient: AccountId, amount: u128) -> Promise {
-        Promise::new(token)
-            .function_call(
-                "ft_transfer".to_string(),
-                near_sdk::serde_json::json!({
-                    "receiver_id": recipient,
-                    "amount": U128(amount),
-                })
-                .to_string()
-                .into_bytes(),
-                NearToken::from_yoctonear(1), // 1 yoctoNEAR for ft_transfer
-                GAS_FOR_FT_TRANSFER,
-            )
+        Promise::new(token).function_call(
+            "ft_transfer".to_string(),
+            near_sdk::serde_json::json!({
+                "receiver_id": recipient,
+                "amount": U128(amount),
+            })
+            .to_string()
+            .into_bytes(),
+            NearToken::from_yoctonear(1), // 1 yoctoNEAR for ft_transfer
+            GAS_FOR_FT_TRANSFER,
+        )
     }
 
     /// Call assertion resolved callback on recipient contract
@@ -799,18 +828,17 @@ impl NestOptimisticOracle {
         // Convert assertion_id to hex string for callback
         let assertion_id_hex = hex::encode(assertion_id);
 
-        Promise::new(recipient)
-            .function_call(
-                "assertion_resolved_callback".to_string(),
-                near_sdk::serde_json::json!({
-                    "assertion_id": assertion_id_hex,
-                    "asserted_truthfully": asserted_truthfully,
-                })
-                .to_string()
-                .into_bytes(),
-                NearToken::from_yoctonear(0),
-                GAS_FOR_CALLBACK,
-            )
+        Promise::new(recipient).function_call(
+            "assertion_resolved_callback".to_string(),
+            near_sdk::serde_json::json!({
+                "assertion_id": assertion_id_hex,
+                "asserted_truthfully": asserted_truthfully,
+            })
+            .to_string()
+            .into_bytes(),
+            NearToken::from_yoctonear(0),
+            GAS_FOR_CALLBACK,
+        )
     }
 
     // ========================================================================
@@ -846,7 +874,9 @@ impl NestOptimisticOracle {
         data.extend_from_slice(identifier);
         data.extend_from_slice(caller.as_bytes());
 
-        env::keccak256(&data).try_into().expect("Hash should be 32 bytes")
+        env::keccak256(&data)
+            .try_into()
+            .expect("Hash should be 32 bytes")
     }
 
     fn assert_owner(&self) {
@@ -928,13 +958,8 @@ mod tests {
         let context = get_context(owner.clone());
         testing_env!(context.build());
 
-        let mut contract = NestOptimisticOracle::new(
-            owner.clone(),
-            currency.clone(),
-            None,
-            None,
-            None,
-        );
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
 
         // Currency not whitelisted yet
         assert_eq!(contract.get_minimum_bond(currency.clone()).0, 0);
@@ -957,13 +982,8 @@ mod tests {
         let context = get_context(owner.clone());
         testing_env!(context.build());
 
-        let mut contract = NestOptimisticOracle::new(
-            owner.clone(),
-            currency.clone(),
-            None,
-            None,
-            None,
-        );
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
 
         assert_eq!(contract.get_voting_contract(), None);
 

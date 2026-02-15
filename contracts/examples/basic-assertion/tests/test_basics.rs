@@ -20,7 +20,11 @@ async fn test_contract_is_operational() -> Result<(), Box<dyn std::error::Error>
         }))
         .transact()
         .await?;
-    assert!(outcome.is_success(), "Init failed: {:#?}", outcome.into_result().unwrap_err());
+    assert!(
+        outcome.is_success(),
+        "Init failed: {:#?}",
+        outcome.into_result().unwrap_err()
+    );
 
     // Verify oracle address
     let stored_oracle: String = contract

@@ -19,11 +19,7 @@ pub trait OptimisticOracleCallbackRecipientInterface {
     /// * `assertion_id` - Hex-encoded 32-byte assertion identifier
     /// * `asserted_truthfully` - `true` if the assertion was resolved as truthful,
     ///   `false` if it was resolved as false (disputer won)
-    fn assertion_resolved_callback(
-        &mut self,
-        assertion_id: String,
-        asserted_truthfully: bool,
-    );
+    fn assertion_resolved_callback(&mut self, assertion_id: String, asserted_truthfully: bool);
 
     /// Called when an assertion is disputed.
     ///
@@ -33,8 +29,5 @@ pub trait OptimisticOracleCallbackRecipientInterface {
     /// # Arguments
     ///
     /// * `assertion_id` - Hex-encoded 32-byte assertion identifier
-    fn assertion_disputed_callback(
-        &mut self,
-        assertion_id: String,
-    );
+    fn assertion_disputed_callback(&mut self, assertion_id: String);
 }

@@ -25,7 +25,11 @@ async fn test_basics_on(contract_wasm: &[u8]) -> Result<(), Box<dyn std::error::
         }))
         .transact()
         .await?;
-    assert!(outcome.is_success(), "{:#?}", outcome.into_result().unwrap_err());
+    assert!(
+        outcome.is_success(),
+        "{:#?}",
+        outcome.into_result().unwrap_err()
+    );
 
     // Set final fee for USDC
     let outcome = owner

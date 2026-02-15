@@ -264,7 +264,8 @@ impl FungibleTokenResolver for VotingToken {
         amount: U128,
     ) -> U128 {
         let (used_amount, burned_amount) =
-            self.token.internal_ft_resolve_transfer(&sender_id, receiver_id, amount);
+            self.token
+                .internal_ft_resolve_transfer(&sender_id, receiver_id, amount);
         if burned_amount > 0 {
             near_contract_standards::fungible_token::events::FtBurn {
                 owner_id: &sender_id,

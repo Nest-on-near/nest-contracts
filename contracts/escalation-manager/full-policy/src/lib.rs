@@ -210,7 +210,8 @@ impl FullPolicyEscalationManager {
         if !self.block_by_asserting_caller {
             return true;
         }
-        self.whitelisted_asserting_callers.contains(&asserting_caller)
+        self.whitelisted_asserting_callers
+            .contains(&asserting_caller)
     }
 
     /// Check if an asserter is allowed (for oracle to call).
