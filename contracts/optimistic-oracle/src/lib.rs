@@ -13,7 +13,10 @@ const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(5);
 const GAS_FOR_DVM_REQUEST: Gas = Gas::from_tgas(30);
 const GAS_FOR_DVM_CALLBACK: Gas = Gas::from_tgas(50);
 const GAS_FOR_DVM_GET_PRICE: Gas = Gas::from_tgas(10);
-const GAS_FOR_SETTLE_CALLBACK: Gas = Gas::from_tgas(80);
+/// Gas for `on_dvm_price_received`, which dispatches settlement payout promises.
+const GAS_FOR_DVM_PRICE_CALLBACK: Gas = Gas::from_tgas(180);
+/// Gas for `on_settlement_payout_complete`, invoked after payout ft_transfer call.
+const GAS_FOR_SETTLEMENT_PAYOUT_CALLBACK: Gas = Gas::from_tgas(80);
 
 use oracle_types::{
     events::Event,
@@ -683,7 +686,7 @@ impl NestOptimisticOracle {
                         .to_string()
                         .into_bytes(),
                         NearToken::from_yoctonear(0),
-                        GAS_FOR_SETTLE_CALLBACK,
+                        GAS_FOR_DVM_PRICE_CALLBACK,
                     ),
                 );
         }
@@ -853,7 +856,7 @@ impl NestOptimisticOracle {
                 .to_string()
                 .into_bytes(),
                 NearToken::from_yoctonear(0),
-                GAS_FOR_SETTLE_CALLBACK,
+                GAS_FOR_SETTLEMENT_PAYOUT_CALLBACK,
             ),
         )
     }

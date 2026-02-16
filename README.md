@@ -24,6 +24,7 @@ flowchart LR
     subgraph DVM["DVM"]
         VOT["Voting (commit-reveal)"]
         VT["Voting Token (NEP-141)"]
+        VAULT["Collateral Vault"]
         SLASH["Slashing Library"]
         FIND["Finder"]
         STORE["Store (final fees)"]
@@ -47,6 +48,8 @@ flowchart LR
     EMW -->|request/get price| VOT
     EMF -->|request/get price or override| VOT
 
+    VAULT -->|mint/burn authority| VT
+    ASSERT -->|deposit collateral| VAULT
     VOT -->|stake-weighted voting| VT
     VOT -->|penalty calculations| SLASH
 
@@ -109,7 +112,8 @@ Each contract has its own README with detailed deployment commands.
 
 | Contract | Description | Docs |
 |----------|-------------|------|
-| **Voting Token** | NEP-141 token for governance voting. Minters/burners controlled by owner. | [README](contracts/dvm/voting-token/README.md) |
+| **Voting Token** | NEST governance/staking token with permissioned mint/burn and restricted transfer routes. | [README](contracts/dvm/voting-token/README.md) |
+| **Vault** | Locks collateral and mints/burns NEST 1:1. | [README](contracts/dvm/vault/README.md) |
 | **Finder** | Service discovery. Maps interface names to contract addresses. | [README](contracts/dvm/finder/README.md) |
 | **Store** | Fee collection. Tracks final fees per currency. | [README](contracts/dvm/store/README.md) |
 | **Identifier Whitelist** | Approved price identifiers for oracle requests. | [README](contracts/dvm/identifier-whitelist/README.md) |
@@ -144,7 +148,7 @@ Each contract has its own README with detailed deployment commands.
 cd contracts/optimistic-oracle && cargo near build non-reproducible-wasm
 
 # Build all DVM contracts
-for contract in voting-token finder store identifier-whitelist registry slashing-library voting; do
+for contract in voting-token vault finder store identifier-whitelist registry slashing-library voting; do
   (cd contracts/dvm/$contract && cargo near build non-reproducible-wasm)
 done
 
@@ -181,16 +185,18 @@ The following contracts are currently deployed on NEAR testnet:
 
 | Contract | Address |
 |----------|---------|
-| Voting Token | `nest-token-1.testnet` |
-| Finder | `nest-finder-1.testnet` |
-| Store | `nest-store-1.testnet` |
-| Identifier Whitelist | `nest-identifiers-1.testnet` |
-| Registry | `nest-registry-1.testnet` |
-| Slashing Library | `nest-slashing-1.testnet` |
-| Voting | `nest-voting-1.testnet` |
-| Optimistic Oracle | `nest-oracle-3.testnet` |
-| **Owner** | `nest-owner-1.testnet` |
-| **Treasury** | `nest-treasury-1.testnet` |
+| Voting Token (NEST) | `nest-token-2.testnet` |
+| Vault | `nest-vault-2.testnet` |
+| Collateral Token (mockNEAR) | `mocknear-1.testnet` |
+| Finder | `nest-finder-2.testnet` |
+| Store | `nest-store-2.testnet` |
+| Identifier Whitelist | `nest-whitelist-1.testnet` |
+| Registry | `nest-registry-2.testnet` |
+| Slashing Library | `nest-slashing-2.testnet` |
+| Voting | `nest-voting-4.testnet` |
+| Optimistic Oracle | `nest-oracle-6.testnet` |
+| **Owner** | `nest-owner-2.testnet` |
+| **Treasury** | `nest-treasury-2.testnet` |
 
 ### Quick Start (Testnet)
 
@@ -205,16 +211,17 @@ Deploy contracts in this order (each depends on previous ones):
 | Order | Contract | Suggested Account | Docs |
 |-------|----------|------------------|------|
 | 1 | Voting Token | `nest-token.testnet` | [README](contracts/dvm/voting-token/README.md) |
-| 2 | Finder | `nest-finder.testnet` | [README](contracts/dvm/finder/README.md) |
-| 3 | Store | `nest-store.testnet` | [README](contracts/dvm/store/README.md) |
-| 4 | Identifier Whitelist | `nest-identifiers.testnet` | [README](contracts/dvm/identifier-whitelist/README.md) |
-| 5 | Registry | `nest-registry.testnet` | [README](contracts/dvm/registry/README.md) |
-| 6 | Slashing Library | `nest-slashing.testnet` | [README](contracts/dvm/slashing-library/README.md) |
-| 7 | Voting | `nest-voting.testnet` | [README](contracts/dvm/voting/README.md) |
-| 8* | Base Escalation Manager | `nest-escalation-base.testnet` | [README](contracts/escalation-manager/base/README.md) |
-| 9* | Whitelist Disputer | `nest-escalation-whitelist.testnet` | [README](contracts/escalation-manager/whitelist-disputer/README.md) |
-| 10* | Full Policy Manager | `nest-escalation-full.testnet` | [README](contracts/escalation-manager/full-policy/README.md) |
-| 11 | Optimistic Oracle | `nest-oracle-3.testnet` | [README](contracts/optimistic-oracle/README.md) |
+| 2 | Vault | `nest-vault.testnet` | [README](contracts/dvm/vault/README.md) |
+| 3 | Finder | `nest-finder.testnet` | [README](contracts/dvm/finder/README.md) |
+| 4 | Store | `nest-store.testnet` | [README](contracts/dvm/store/README.md) |
+| 5 | Identifier Whitelist | `nest-identifiers.testnet` | [README](contracts/dvm/identifier-whitelist/README.md) |
+| 6 | Registry | `nest-registry.testnet` | [README](contracts/dvm/registry/README.md) |
+| 7 | Slashing Library | `nest-slashing.testnet` | [README](contracts/dvm/slashing-library/README.md) |
+| 8 | Voting | `nest-voting.testnet` | [README](contracts/dvm/voting/README.md) |
+| 9* | Base Escalation Manager | `nest-escalation-base.testnet` | [README](contracts/escalation-manager/base/README.md) |
+| 10* | Whitelist Disputer | `nest-escalation-whitelist.testnet` | [README](contracts/escalation-manager/whitelist-disputer/README.md) |
+| 11* | Full Policy Manager | `nest-escalation-full.testnet` | [README](contracts/escalation-manager/full-policy/README.md) |
+| 12 | Optimistic Oracle | `nest-oracle.testnet` | [README](contracts/optimistic-oracle/README.md) |
 
 **\*Optional:** Escalation managers are only needed if you want to customize assertion/dispute behavior.
 
@@ -223,14 +230,19 @@ Deploy contracts in this order (each depends on previous ones):
 After deploying all contracts, complete the configuration steps in **[POST_DEPLOYMENT.md](POST_DEPLOYMENT.md)**.
 
 **Quick summary:**
-1. Add Voting as minter on VotingToken
-2. Register all interfaces in Finder
-3. Whitelist price identifiers (ASSERT_TRUTH, YES_OR_NO_QUERY)
-4. Set final fees in Store
-5. Whitelist currencies in Oracle
-6. Register Oracle in Registry
+1. Deploy and initialize Vault with collateral + NEST token addresses
+2. Set vault on VotingToken (`set_vault_account`) and allow Voting router (`add_transfer_router`)
+3. Register required storage accounts on NEST/collateral tokens (vault, voting, treasury, users)
+4. Register all interfaces in Finder
+5. Whitelist price identifiers (ASSERT_TRUTH, YES_OR_NO_QUERY)
+6. Set final fees in Store
+7. Whitelist currencies in Oracle
+8. Register Oracle in Registry
 
 See [POST_DEPLOYMENT.md](POST_DEPLOYMENT.md) for complete step-by-step commands with verification.
+
+For scripted testnet rollout (accounts + deploy + init + wiring), use:
+`scripts/deploy-testnet.sh`
 
 ## Links
 

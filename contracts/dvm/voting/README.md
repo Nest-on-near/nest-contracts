@@ -9,6 +9,7 @@ Nest DVM commit-reveal voting contract for disputed assertion resolution.
    - `receiver_id = voting contract`
    - `amount = stake`
    - `msg = {"action":"CommitVote","request_id":..., "commit_hash":...}`
+   - Note: if token transfer restriction is enabled, voting contract must be allowlisted as a transfer router on NEST.
 3. Anyone can advance to reveal with `advance_to_reveal` after commit duration.
 4. Voters reveal with `reveal_vote(request_id, price, salt)`.
 5. `resolve_price` computes stake-weighted median from revealed votes.
@@ -18,6 +19,7 @@ Nest DVM commit-reveal voting contract for disputed assertion resolution.
 - Stake is locked in-contract until resolution.
 - Incorrect or unrevealed votes are slashed at settlement.
 - Slashed stake is split between treasury and winning voters (`slashing_treasury_bps`).
+- Reward/slash payouts use `ft_transfer` from the voting contract account; keep voting allowlisted in NEST transfer routers.
 - Minimum participation is enforced (`min_participation_rate`).
 - Low participation fallback:
   - automatic reveal extension up to `max_low_participation_extensions`

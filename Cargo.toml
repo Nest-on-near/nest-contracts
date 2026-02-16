@@ -13,6 +13,7 @@ members = [
     "contracts/dvm/registry",
     "contracts/dvm/slashing-library",
     "contracts/dvm/voting",
+    "contracts/dvm/vault",
     "crates/oracle-types",
     "integration-tests",
 ]

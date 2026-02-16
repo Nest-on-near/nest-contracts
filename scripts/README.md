@@ -31,6 +31,107 @@ The Oracle now has **full DVM integration** - when assertions are disputed, they
 
 ## Scripts
 
+### deploy-testnet.sh
+
+Deploys the full NEST DVM + Vault stack to NEAR testnet using `near` CLI.
+
+What it does:
+1. Optionally builds all required wasm contracts.
+2. Optionally creates accounts one-by-one with delay/retries (faucet-safe pacing).
+3. Deploys all contracts.
+4. Runs init methods (`new(...)`) for all contracts.
+5. Runs post-deploy wiring/config (vault roles, voting config, finder mappings, store/oracle whitelist, registry).
+6. Runs storage registrations required for NEST and collateral token flows.
+
+Run from `nest-contracts`:
+
+```bash
+OWNER_ACCOUNT= nest-owner-2.testnet \
+TREASURY_ACCOUNT= nest-treasury-2.testnet \
+TOKEN_ACCOUNT= nest-token-2.testnet \
+VAULT_ACCOUNT= nest-vault-2.testnet \
+FINDER_ACCOUNT= nest-finder-2.testnet \
+STORE_ACCOUNT= nest-store-2.testnet \
+IDENTIFIER_WHITELIST_ACCOUNT= nest-whitelist-1.testnet \
+REGISTRY_ACCOUNT= nest-registry-2.testnet \
+SLASHING_ACCOUNT= nest-slashing-2.testnet \
+VOTING_ACCOUNT= nest-voting-4.testnet \
+ORACLE_ACCOUNT= nest-oracle-6.testnet \
+COLLATERAL_TOKEN= wrap.testnet \
+BUILD_NOW=y \
+CREATE_ACCOUNTS=y \
+./scripts/deploy-testnet.sh
+```
+
+If you want the script to deploy a fresh mock collateral token as well:
+
+```bash
+OWNER_ACCOUNT=nest-owner-2.testnet \
+TREASURY_ACCOUNT=nest-treasury-2.testnet \
+TOKEN_ACCOUNT=nest-token-2.testnet \
+VAULT_ACCOUNT=nest-vault-2.testnet \
+FINDER_ACCOUNT=nest-finder-2.testnet \
+STORE_ACCOUNT=nest-store-2.testnet \
+IDENTIFIER_WHITELIST_ACCOUNT=nest-whitelist-1.testnet \
+REGISTRY_ACCOUNT=nest-registry-2.testnet \
+SLASHING_ACCOUNT=nest-slashing-2.testnet \
+VOTING_ACCOUNT=nest-voting-4.testnet \
+ORACLE_ACCOUNT=nest-oracle-6.testnet \
+DEPLOY_MOCK_COLLATERAL=y \
+MOCK_COLLATERAL_ACCOUNT=mocknear-1.testnet \
+MOCK_COLLATERAL_OWNER=nest-owner-2.testnet \
+MOCK_COLLATERAL_TOTAL_SUPPLY=1000000000000000000000000000 \
+MOCK_COLLATERAL_TRANSFER_RESTRICTED=false \
+COMMIT_DURATION_NS=120000000000 \
+REVEAL_DURATION_NS=120000000000 \
+ORACLE_LIVENESS_NS=120000000000 \
+BUILD_NOW=y \
+CREATE_ACCOUNTS=n \
+./scripts/deploy-testnet.sh
+```
+
+Required env vars:
+
+```bash
+OWNER_ACCOUNT
+TREASURY_ACCOUNT
+TOKEN_ACCOUNT
+VAULT_ACCOUNT
+FINDER_ACCOUNT
+STORE_ACCOUNT
+IDENTIFIER_WHITELIST_ACCOUNT
+REGISTRY_ACCOUNT
+SLASHING_ACCOUNT
+VOTING_ACCOUNT
+ORACLE_ACCOUNT
+```
+
+Optional env vars (with defaults):
+
+```bash
+NETWORK=testnet
+CREATE_SLEEP_SECONDS=15
+CREATE_RETRIES=3
+COLLATERAL_TOKEN=wrap.testnet
+
+FINAL_FEE=100000000000000000000000
+ORACLE_LIVENESS_NS=7200000000000
+BURNED_BOND_PERCENTAGE=500000000000000000
+SLASHING_RATE_BPS=1000
+SLASHING_TREASURY_BPS=5000
+MIN_PARTICIPATION_BPS=500
+COMMIT_DURATION_NS=86400000000000
+REVEAL_DURATION_NS=86400000000000
+
+BUILD_NOW=y
+CREATE_ACCOUNTS=y
+DEPLOY_MOCK_COLLATERAL=n
+MOCK_COLLATERAL_ACCOUNT=
+MOCK_COLLATERAL_OWNER=<defaults to OWNER_ACCOUNT>
+MOCK_COLLATERAL_TOTAL_SUPPLY=1000000000000000000000000000
+MOCK_COLLATERAL_TRANSFER_RESTRICTED=false
+```
+
 ### test-market-dvm-flow.js
 
 One-command E2E runner for the prediction-market dispute path:

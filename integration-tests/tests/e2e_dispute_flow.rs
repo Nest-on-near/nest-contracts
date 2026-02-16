@@ -113,6 +113,14 @@ async fn test_voting_token() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ VotingToken: Initialized");
 
+    // This test treats token as a generic transferable asset.
+    owner
+        .call(token.id(), "set_transfer_restricted")
+        .args_json(json!({ "restricted": false }))
+        .transact()
+        .await?
+        .into_result()?;
+
     // Check total supply
     let supply: String = token
         .view("ft_total_supply")
@@ -130,6 +138,15 @@ async fn test_voting_token() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .into_result()?;
 
+    // Register voter for storage
+    voter
+        .call(token.id(), "storage_deposit")
+        .args_json(json!({}))
+        .deposit(near_workspaces::types::NearToken::from_millinear(10))
+        .transact()
+        .await?
+        .into_result()?;
+
     // Mint tokens to voter
     owner
         .call(token.id(), "mint")
@@ -137,15 +154,6 @@ async fn test_voting_token() -> Result<(), Box<dyn std::error::Error>> {
             "account_id": voter.id(),
             "amount": "100000000000000000000" // 100 tokens
         }))
-        .transact()
-        .await?
-        .into_result()?;
-
-    // Register voter for storage
-    voter
-        .call(token.id(), "storage_deposit")
-        .args_json(json!({}))
-        .deposit(near_workspaces::types::NearToken::from_millinear(10))
         .transact()
         .await?
         .into_result()?;
@@ -192,6 +200,13 @@ async fn test_oracle_setup() -> Result<(), Box<dyn std::error::Error>> {
         .into_result()?;
 
     println!("✅ Bond Token: Initialized");
+
+    owner
+        .call(token.id(), "set_transfer_restricted")
+        .args_json(json!({ "restricted": false }))
+        .transact()
+        .await?
+        .into_result()?;
 
     // Initialize voting contract
     voting
@@ -287,6 +302,13 @@ async fn test_full_dvm_dispute_flow() -> Result<(), Box<dyn std::error::Error>> 
             "symbol": "BOND",
             "decimals": 18
         }))
+        .transact()
+        .await?
+        .into_result()?;
+
+    owner
+        .call(token.id(), "set_transfer_restricted")
+        .args_json(json!({ "restricted": false }))
         .transact()
         .await?
         .into_result()?;
@@ -401,7 +423,9 @@ async fn test_full_dvm_dispute_flow() -> Result<(), Box<dyn std::error::Error>> 
     // PHASE 1: CREATE ASSERTION
     // ═══════════════════════════════════════════════════════════════
 
-    let claim: [u8; 32] = *b"The sky is blue. Test claim!!!.";
+    let mut claim = [0u8; 32];
+    let claim_text = b"The sky is blue. Test claim";
+    claim[..claim_text.len()].copy_from_slice(claim_text);
 
     let assert_msg = json!({
         "action": "AssertTruth",
@@ -425,7 +449,7 @@ async fn test_full_dvm_dispute_flow() -> Result<(), Box<dyn std::error::Error>> 
     println!("✅ PHASE 1: Assertion created");
 
     // Parse assertion_id from logs
-    let logs: Vec<String> = outcome.logs().to_vec();
+    let logs: Vec<String> = outcome.logs().iter().map(|log| log.to_string()).collect();
     println!("   Logs: {:?}", logs);
 
     // ═══════════════════════════════════════════════════════════════

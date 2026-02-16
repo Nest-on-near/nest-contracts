@@ -63,6 +63,18 @@ async fn test_basics_on(contract_wasm: &[u8]) -> Result<(), Box<dyn std::error::
         .json()?;
     assert!(is_minter);
 
+    // Recipient must register storage before minting
+    let outcome = recipient
+        .call(contract.id(), "storage_deposit")
+        .args_json(json!({
+            "account_id": recipient.id(),
+            "registration_only": true
+        }))
+        .deposit(near_workspaces::types::NearToken::from_millinear(10))
+        .transact()
+        .await?;
+    assert!(outcome.is_success());
+
     // Mint tokens to recipient
     let outcome = minter
         .call(contract.id(), "mint")

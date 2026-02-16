@@ -2,45 +2,102 @@
 
 After deploying all contracts, complete these configuration steps in order.
 
+> Note:
+> The command snippets below use older sample account IDs (`*-1.testnet` / `nest-oracle-3.testnet`) as placeholders.
+> For the current deployment use your actual IDs (for example: `nest-*-2.testnet`, `nest-voting-4.testnet`, `nest-oracle-6.testnet`, `mocknear-1.testnet`),
+> or run `scripts/deploy-testnet.sh` for end-to-end automated wiring.
+
 ## Deployed Addresses
 
 | Contract | Address |
 |----------|---------|
-| Voting Token | `nest-token-1.testnet` |
-| Finder | `nest-finder-1.testnet` |
-| Store | `nest-store-1.testnet` |
-| Identifier Whitelist | `nest-identifiers-1.testnet` |
-| Registry | `nest-registry-1.testnet` |
-| Slashing Library | `nest-slashing-1.testnet` |
-| Voting | `nest-voting-1.testnet` |
-| Optimistic Oracle | `nest-oracle-3.testnet` |
-| **Owner** | `nest-owner-1.testnet` |
-| **Treasury** | `nest-treasury-1.testnet` |
+| Voting Token (NEST) | `nest-token-2.testnet` |
+| Vault | `nest-vault-2.testnet` |
+| Collateral Token (mockNEAR) | `mocknear-1.testnet` |
+| Finder | `nest-finder-2.testnet` |
+| Store | `nest-store-2.testnet` |
+| Identifier Whitelist | `nest-whitelist-1.testnet` |
+| Registry | `nest-registry-2.testnet` |
+| Slashing Library | `nest-slashing-2.testnet` |
+| Voting | `nest-voting-4.testnet` |
+| Optimistic Oracle | `nest-oracle-6.testnet` |
+| **Owner** | `nest-owner-2.testnet` |
+| **Treasury** | `nest-treasury-2.testnet` |
 
 ---
 
-## Step 1: Add Voting as Minter
+## Step 1: Deploy and Initialize Vault
 
-Allow the Voting contract to mint reward tokens:
+Deploy `vault` and initialize with collateral and NEST token contracts:
 
 ```bash
-near contract call-function as-transaction nest-token-1.testnet add_minter json-args '{
+# Example deploy (replace account names)
+cargo near deploy build-non-reproducible-wasm nest-vault-1.testnet
+
+near contract call-function as-transaction nest-vault-1.testnet new json-args '{
+  "owner": "nest-owner-1.testnet",
+  "collateral_token": "wrap.testnet",
+  "nest_token": "nest-token-1.testnet",
+  "emergency_recipient": "nest-treasury-1.testnet"
+}' prepaid-gas '80 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+```
+
+---
+
+## Step 2: Wire Vault + Voting Permissions on NEST
+
+Grant vault mint/burn authority and enable protocol transfer routes:
+
+```bash
+# Set vault authority (grants minter + burner + transfer router)
+near contract call-function as-transaction nest-token-1.testnet set_vault_account json-args '{
+  "vault_account": "nest-vault-1.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+
+# Allow voting staking/reward route
+near contract call-function as-transaction nest-token-1.testnet add_transfer_router json-args '{
   "account_id": "nest-voting-1.testnet"
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-token-1.testnet is_minter json-args '{
-  "account_id": "nest-voting-1.testnet"
-}' network-config testnet now
+near contract call-function as-read-only nest-token-1.testnet get_vault_account json-args '{}' network-config testnet now
+near contract call-function as-read-only nest-token-1.testnet is_transfer_router json-args '{"account_id":"nest-voting-1.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-token-1.testnet get_transfer_restricted json-args '{}' network-config testnet now
 ```
 
 ---
 
-## Step 2: Register Interfaces in Finder
+## Step 3: Storage Registrations (Required)
+
+Register required accounts on both NEST and collateral token contracts:
+
+```bash
+# On NEST token: register vault, voting, treasury and expected users
+near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-voting-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-treasury-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+
+# On collateral token: register vault and users that will redeem
+near contract call-function as-transaction wrap.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+```
+
+---
+
+## Step 4: Register Interfaces in Finder
 
 Register all DVM contracts with the Finder:
+
+```bash
+# Register Vault
+near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+  "interface_name": "Vault",
+  "implementation_address": "nest-vault-1.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+```
+
+Then register the rest:
 
 ```bash
 # Register Store
@@ -83,7 +140,7 @@ near contract call-function as-read-only nest-finder-1.testnet get_implementatio
 
 ---
 
-## Step 3: Whitelist Price Identifiers
+## Step 5: Whitelist Price Identifiers
 
 Add approved identifiers to the whitelist:
 
@@ -108,7 +165,7 @@ near contract call-function as-read-only nest-identifiers-1.testnet is_identifie
 
 ---
 
-## Step 4: Set Final Fees in Store
+## Step 6: Set Final Fees in Store
 
 Configure final fees for bond currencies:
 
@@ -129,7 +186,7 @@ near contract call-function as-read-only nest-store-1.testnet get_final_fee json
 
 ---
 
-## Step 5: Whitelist Currencies in Oracle
+## Step 7: Whitelist Currencies in Oracle
 
 Whitelist bond tokens in the Optimistic Oracle:
 
@@ -155,7 +212,7 @@ near contract call-function as-read-only nest-oracle-3.testnet get_minimum_bond 
 
 ---
 
-## Step 6: Whitelist ASSERT_TRUTH Identifier in Oracle
+## Step 8: Whitelist ASSERT_TRUTH Identifier in Oracle
 
 Whitelist the default identifier (should be done during deployment, but verify):
 
@@ -174,7 +231,7 @@ near contract call-function as-read-only nest-oracle-3.testnet is_identifier_sup
 
 ---
 
-## Step 7: Register Oracle in Registry
+## Step 9: Register Oracle in Registry
 
 Allow the Oracle to make price requests to the DVM:
 
@@ -202,8 +259,13 @@ Your Nest oracle system is now fully configured and ready to accept assertions.
 Run all verification commands to ensure everything is configured correctly:
 
 ```bash
-# Check Voting is a minter
-near contract call-function as-read-only nest-token-1.testnet is_minter json-args '{"account_id": "nest-voting-1.testnet"}' network-config testnet now
+# Check vault mint/burn permissions
+near contract call-function as-read-only nest-token-1.testnet is_minter json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-token-1.testnet is_burner json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
+
+# Check vault is wired
+near contract call-function as-read-only nest-token-1.testnet get_vault_account json-args '{}' network-config testnet now
+near contract call-function as-read-only nest-vault-1.testnet get_invariant_diagnostics json-args '{}' network-config testnet now
 
 # Check Finder has Store registered
 near contract call-function as-read-only nest-finder-1.testnet get_implementation_address json-args '{"interface_name": "Store"}' network-config testnet now
