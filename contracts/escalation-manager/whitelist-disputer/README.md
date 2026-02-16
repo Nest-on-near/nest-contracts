@@ -30,7 +30,7 @@ near deploy nest-escalation-whitelist.testnet ../../../target/near/whitelist_dis
 
 ```bash
 near contract call-function as-transaction nest-escalation-whitelist.testnet new json-args '{
-  "oracle": "nest-oracle-3.testnet"
+  "oracle": "nest-oracle-7.testnet"
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-escalation-whitelist.testnet network-config testnet sign-with-keychain send
 ```
 

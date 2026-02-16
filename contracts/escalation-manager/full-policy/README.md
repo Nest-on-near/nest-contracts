@@ -31,7 +31,7 @@ near deploy nest-escalation-full.testnet ../../../target/near/full_policy_escala
 
 ```bash
 near contract call-function as-transaction nest-escalation-full.testnet new json-args '{
-  "oracle": "nest-oracle-3.testnet"
+  "oracle": "nest-oracle-7.testnet"
 }' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-escalation-full.testnet network-config testnet sign-with-keychain send
 ```
 

@@ -28,7 +28,6 @@ ASSERT_TRUTH_BYTES32='[65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0
 OWNER_ACCOUNT="${OWNER_ACCOUNT:-}"
 TREASURY_ACCOUNT="${TREASURY_ACCOUNT:-}"
 TOKEN_ACCOUNT="${TOKEN_ACCOUNT:-}"
-VAULT_ACCOUNT="${VAULT_ACCOUNT:-}"
 FINDER_ACCOUNT="${FINDER_ACCOUNT:-}"
 STORE_ACCOUNT="${STORE_ACCOUNT:-}"
 IDENTIFIER_WHITELIST_ACCOUNT="${IDENTIFIER_WHITELIST_ACCOUNT:-}"
@@ -36,6 +35,9 @@ REGISTRY_ACCOUNT="${REGISTRY_ACCOUNT:-}"
 SLASHING_ACCOUNT="${SLASHING_ACCOUNT:-}"
 VOTING_ACCOUNT="${VOTING_ACCOUNT:-}"
 ORACLE_ACCOUNT="${ORACLE_ACCOUNT:-}"
+MINT_OPERATOR_ACCOUNT="${MINT_OPERATOR_ACCOUNT:-}"
+MINT_RECIPIENTS="${MINT_RECIPIENTS:-}"
+MINT_AMOUNT="${MINT_AMOUNT:-0}"
 
 COLLATERAL_TOKEN="${COLLATERAL_TOKEN:-wrap.testnet}"
 FINAL_FEE="${FINAL_FEE:-$DEFAULT_FINAL_FEE}"
@@ -58,7 +60,7 @@ MOCK_COLLATERAL_TRANSFER_RESTRICTED="${MOCK_COLLATERAL_TRANSFER_RESTRICTED:-fals
 usage() {
   cat <<EOF
 Usage:
-  OWNER_ACCOUNT=... TREASURY_ACCOUNT=... TOKEN_ACCOUNT=... VAULT_ACCOUNT=... \\
+  OWNER_ACCOUNT=... TREASURY_ACCOUNT=... TOKEN_ACCOUNT=... \\
   FINDER_ACCOUNT=... STORE_ACCOUNT=... IDENTIFIER_WHITELIST_ACCOUNT=... \\
   REGISTRY_ACCOUNT=... SLASHING_ACCOUNT=... VOTING_ACCOUNT=... ORACLE_ACCOUNT=... \\
   ./scripts/deploy-testnet.sh
@@ -75,6 +77,9 @@ Optional env vars:
   MOCK_COLLATERAL_OWNER=${MOCK_COLLATERAL_OWNER:-OWNER_ACCOUNT}
   MOCK_COLLATERAL_TOTAL_SUPPLY=${MOCK_COLLATERAL_TOTAL_SUPPLY}
   MOCK_COLLATERAL_TRANSFER_RESTRICTED=${MOCK_COLLATERAL_TRANSFER_RESTRICTED}
+  MINT_OPERATOR_ACCOUNT=${MINT_OPERATOR_ACCOUNT:-OWNER_ACCOUNT}
+  MINT_RECIPIENTS=<comma-separated account list for initial NEST mint>
+  MINT_AMOUNT=${MINT_AMOUNT} (raw yocto units, applied to each MINT_RECIPIENTS account)
 EOF
 }
 
@@ -158,11 +163,34 @@ deploy_contract() {
     network-config "$NETWORK" sign-with-keychain send
 }
 
+mint_initial_nest_if_requested() {
+  if [[ -z "$MINT_RECIPIENTS" ]]; then
+    echo "No initial NEST recipients configured (MINT_RECIPIENTS empty); skipping mint."
+    return 0
+  fi
+
+  if [[ "$MINT_AMOUNT" == "0" ]]; then
+    echo "MINT_AMOUNT is 0 while MINT_RECIPIENTS is set; skipping initial mint."
+    return 0
+  fi
+
+  IFS=',' read -r -a recipients <<< "$MINT_RECIPIENTS"
+  local recipient
+  for recipient in "${recipients[@]}"; do
+    local account
+    account="$(echo "$recipient" | tr -d '[:space:]')"
+    if [[ -z "$account" ]]; then
+      continue
+    fi
+    near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$account\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
+    near_tx "$TOKEN_ACCOUNT" "mint" "{\"account_id\":\"$account\",\"amount\":\"$MINT_AMOUNT\"}" "$MINT_OPERATOR_ACCOUNT"
+  done
+}
+
 build_contracts() {
   echo "Building contracts..."
   local build_dirs=(
     "contracts/dvm/voting-token"
-    "contracts/dvm/vault"
     "contracts/dvm/finder"
     "contracts/dvm/store"
     "contracts/dvm/identifier-whitelist"
@@ -191,7 +219,6 @@ main() {
   require_env "OWNER_ACCOUNT" "$OWNER_ACCOUNT"
   require_env "TREASURY_ACCOUNT" "$TREASURY_ACCOUNT"
   require_env "TOKEN_ACCOUNT" "$TOKEN_ACCOUNT"
-  require_env "VAULT_ACCOUNT" "$VAULT_ACCOUNT"
   require_env "FINDER_ACCOUNT" "$FINDER_ACCOUNT"
   require_env "STORE_ACCOUNT" "$STORE_ACCOUNT"
   require_env "IDENTIFIER_WHITELIST_ACCOUNT" "$IDENTIFIER_WHITELIST_ACCOUNT"
@@ -199,6 +226,9 @@ main() {
   require_env "SLASHING_ACCOUNT" "$SLASHING_ACCOUNT"
   require_env "VOTING_ACCOUNT" "$VOTING_ACCOUNT"
   require_env "ORACLE_ACCOUNT" "$ORACLE_ACCOUNT"
+  if [[ -z "$MINT_OPERATOR_ACCOUNT" ]]; then
+    MINT_OPERATOR_ACCOUNT="$OWNER_ACCOUNT"
+  fi
 
   if [[ "${DEPLOY_MOCK_COLLATERAL,,}" == "y" ]]; then
     require_env "MOCK_COLLATERAL_ACCOUNT" "$MOCK_COLLATERAL_ACCOUNT"
@@ -212,7 +242,7 @@ main() {
     COLLATERAL_TOKEN="$MOCK_COLLATERAL_ACCOUNT"
   fi
 
-  echo "=== NEST Testnet Deploy (DVM + Vault-backed NEST) ==="
+  echo "=== NEST Testnet Deploy (DVM + direct-mint NEST) ==="
   echo
 
   cat <<EOF
@@ -224,7 +254,6 @@ Deployment plan:
   collateral token: $COLLATERAL_TOKEN
   contracts:
     token: $TOKEN_ACCOUNT
-    vault: $VAULT_ACCOUNT
     finder: $FINDER_ACCOUNT
     store: $STORE_ACCOUNT
     identifier whitelist: $IDENTIFIER_WHITELIST_ACCOUNT
@@ -235,6 +264,9 @@ Deployment plan:
   build now: $BUILD_NOW
   create accounts: $CREATE_ACCOUNTS
   deploy mock collateral: $DEPLOY_MOCK_COLLATERAL
+  mint operator: $MINT_OPERATOR_ACCOUNT
+  mint recipients: ${MINT_RECIPIENTS:-<none>}
+  mint amount each: $MINT_AMOUNT
 EOF
 
   if [[ "${BUILD_NOW,,}" == "y" ]]; then
@@ -244,8 +276,8 @@ EOF
   local accounts=(
     "$OWNER_ACCOUNT"
     "$TREASURY_ACCOUNT"
+    "$MINT_OPERATOR_ACCOUNT"
     "$TOKEN_ACCOUNT"
-    "$VAULT_ACCOUNT"
     "$FINDER_ACCOUNT"
     "$STORE_ACCOUNT"
     "$IDENTIFIER_WHITELIST_ACCOUNT"
@@ -269,7 +301,6 @@ EOF
 
   local wasm_paths=(
     "${ROOT_DIR}/target/near/voting_token/voting_token.wasm"
-    "${ROOT_DIR}/target/near/vault/vault.wasm"
     "${ROOT_DIR}/target/near/finder/finder.wasm"
     "${ROOT_DIR}/target/near/store/store.wasm"
     "${ROOT_DIR}/target/near/identifier_whitelist/identifier_whitelist.wasm"
@@ -281,7 +312,6 @@ EOF
 
   local deploy_accounts=(
     "$TOKEN_ACCOUNT"
-    "$VAULT_ACCOUNT"
     "$FINDER_ACCOUNT"
     "$STORE_ACCOUNT"
     "$IDENTIFIER_WHITELIST_ACCOUNT"
@@ -306,7 +336,6 @@ EOF
 
   echo "Initializing contracts..."
   near_tx "$TOKEN_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\",\"total_supply\":\"0\"}" "$OWNER_ACCOUNT"
-  near_tx "$VAULT_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\",\"collateral_token\":\"$COLLATERAL_TOKEN\",\"nest_token\":\"$TOKEN_ACCOUNT\",\"emergency_recipient\":\"$TREASURY_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$FINDER_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$STORE_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\",\"withdrawer\":\"$TREASURY_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$IDENTIFIER_WHITELIST_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\"}" "$OWNER_ACCOUNT"
@@ -316,7 +345,8 @@ EOF
   near_tx "$ORACLE_ACCOUNT" "new" "{\"owner\":\"$OWNER_ACCOUNT\",\"default_currency\":\"$COLLATERAL_TOKEN\",\"default_liveness_ns\":\"$ORACLE_LIVENESS_NS\",\"burned_bond_percentage\":\"$BURNED_BOND_PERCENTAGE\",\"voting_contract\":\"$VOTING_ACCOUNT\"}" "$OWNER_ACCOUNT"
 
   echo "Running post-deploy wiring..."
-  near_tx "$TOKEN_ACCOUNT" "set_vault_account" "{\"vault_account\":\"$VAULT_ACCOUNT\"}" "$OWNER_ACCOUNT"
+  near_tx "$TOKEN_ACCOUNT" "add_minter" "{\"account_id\":\"$MINT_OPERATOR_ACCOUNT\"}" "$OWNER_ACCOUNT"
+  near_tx "$TOKEN_ACCOUNT" "set_transfer_restricted" "{\"restricted\":true}" "$OWNER_ACCOUNT"
   near_tx "$TOKEN_ACCOUNT" "add_transfer_router" "{\"account_id\":\"$VOTING_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$VOTING_ACCOUNT" "set_voting_token" "{\"voting_token\":\"$TOKEN_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$VOTING_ACCOUNT" "set_treasury" "{\"treasury\":\"$TREASURY_ACCOUNT\"}" "$OWNER_ACCOUNT"
@@ -333,7 +363,6 @@ EOF
   near_tx "$IDENTIFIER_WHITELIST_ACCOUNT" "add_supported_identifier" "{\"identifier\":\"ASSERT_TRUTH\"}" "$OWNER_ACCOUNT"
   near_tx "$IDENTIFIER_WHITELIST_ACCOUNT" "add_supported_identifier" "{\"identifier\":\"YES_OR_NO_QUERY\"}" "$OWNER_ACCOUNT"
 
-  near_tx "$FINDER_ACCOUNT" "change_implementation_address" "{\"interface_name\":\"Vault\",\"implementation_address\":\"$VAULT_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$FINDER_ACCOUNT" "change_implementation_address" "{\"interface_name\":\"Store\",\"implementation_address\":\"$STORE_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$FINDER_ACCOUNT" "change_implementation_address" "{\"interface_name\":\"Registry\",\"implementation_address\":\"$REGISTRY_ACCOUNT\"}" "$OWNER_ACCOUNT"
   near_tx "$FINDER_ACCOUNT" "change_implementation_address" "{\"interface_name\":\"IdentifierWhitelist\",\"implementation_address\":\"$IDENTIFIER_WHITELIST_ACCOUNT\"}" "$OWNER_ACCOUNT"
@@ -346,18 +375,18 @@ EOF
 
   echo "Running storage registrations..."
   near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$OWNER_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
-  near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$VAULT_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
+  near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$MINT_OPERATOR_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
   near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$VOTING_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
   near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$TREASURY_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
   near_tx "$TOKEN_ACCOUNT" "storage_deposit" "{\"account_id\":\"$ORACLE_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
-
-  near_tx "$COLLATERAL_TOKEN" "storage_deposit" "{\"account_id\":\"$VAULT_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
+  near_tx "$COLLATERAL_TOKEN" "storage_deposit" "{\"account_id\":\"$ORACLE_ACCOUNT\",\"registration_only\":true}" "$OWNER_ACCOUNT" "30 Tgas" "0.01 NEAR"
+  mint_initial_nest_if_requested
 
   echo
   echo "Deployment complete."
   echo "Recommended checks:"
-  echo "  near contract call-function as-read-only $TOKEN_ACCOUNT get_vault_account json-args '{}' network-config $NETWORK now"
-  echo "  near contract call-function as-read-only $TOKEN_ACCOUNT is_minter json-args '{\"account_id\":\"$VAULT_ACCOUNT\"}' network-config $NETWORK now"
+  echo "  near contract call-function as-read-only $TOKEN_ACCOUNT is_minter json-args '{\"account_id\":\"$MINT_OPERATOR_ACCOUNT\"}' network-config $NETWORK now"
+  echo "  near contract call-function as-read-only $TOKEN_ACCOUNT get_transfer_restricted json-args '{}' network-config $NETWORK now"
   echo "  near contract call-function as-read-only $ORACLE_ACCOUNT is_currency_whitelisted json-args '{\"currency\":\"$COLLATERAL_TOKEN\"}' network-config $NETWORK now"
 }
 

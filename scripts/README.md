@@ -33,31 +33,34 @@ The Oracle now has **full DVM integration** - when assertions are disputed, they
 
 ### deploy-testnet.sh
 
-Deploys the full NEST DVM + Vault stack to NEAR testnet using `near` CLI.
+Deploys the NEST DVM stack to NEAR testnet using `near` CLI (direct-mint NEST demo mode).
 
 What it does:
 1. Optionally builds all required wasm contracts.
 2. Optionally creates accounts one-by-one with delay/retries (faucet-safe pacing).
 3. Deploys all contracts.
 4. Runs init methods (`new(...)`) for all contracts.
-5. Runs post-deploy wiring/config (vault roles, voting config, finder mappings, store/oracle whitelist, registry).
-6. Runs storage registrations required for NEST and collateral token flows.
+5. Runs post-deploy wiring/config (minter role, transfer restrictions, voting config, finder mappings, store/oracle whitelist, registry).
+6. Runs storage registrations required for NEST + oracle collateral flow.
+7. Optionally mints initial NEST to recipients (`MINT_RECIPIENTS`, `MINT_AMOUNT`).
 
 Run from `nest-contracts`:
 
 ```bash
-OWNER_ACCOUNT= nest-owner-2.testnet \
-TREASURY_ACCOUNT= nest-treasury-2.testnet \
-TOKEN_ACCOUNT= nest-token-2.testnet \
-VAULT_ACCOUNT= nest-vault-2.testnet \
-FINDER_ACCOUNT= nest-finder-2.testnet \
-STORE_ACCOUNT= nest-store-2.testnet \
-IDENTIFIER_WHITELIST_ACCOUNT= nest-whitelist-1.testnet \
-REGISTRY_ACCOUNT= nest-registry-2.testnet \
-SLASHING_ACCOUNT= nest-slashing-2.testnet \
-VOTING_ACCOUNT= nest-voting-4.testnet \
-ORACLE_ACCOUNT= nest-oracle-6.testnet \
-COLLATERAL_TOKEN= wrap.testnet \
+OWNER_ACCOUNT= nest-owner-3.testnet \
+TREASURY_ACCOUNT= nest-treasury-3.testnet \
+TOKEN_ACCOUNT= nest-token-3.testnet \
+FINDER_ACCOUNT= nest-finder-3.testnet \
+STORE_ACCOUNT= nest-store-3.testnet \
+IDENTIFIER_WHITELIST_ACCOUNT= nest-whitelist-2.testnet \
+REGISTRY_ACCOUNT= nest-registry-3.testnet \
+SLASHING_ACCOUNT= nest-slashing-3.testnet \
+VOTING_ACCOUNT= nest-voting-5.testnet \
+ORACLE_ACCOUNT= nest-oracle-7.testnet \
+COLLATERAL_TOKEN= nusd-1.testnet \
+MINT_OPERATOR_ACCOUNT=nest-owner-3.testnet \
+MINT_RECIPIENTS="luckykale1318.testnet,younghost2932.testnet" \
+MINT_AMOUNT=1000000000000000000000000 \
 BUILD_NOW=y \
 CREATE_ACCOUNTS=y \
 ./scripts/deploy-testnet.sh
@@ -66,20 +69,19 @@ CREATE_ACCOUNTS=y \
 If you want the script to deploy a fresh mock collateral token as well:
 
 ```bash
-OWNER_ACCOUNT=nest-owner-2.testnet \
-TREASURY_ACCOUNT=nest-treasury-2.testnet \
-TOKEN_ACCOUNT=nest-token-2.testnet \
-VAULT_ACCOUNT=nest-vault-2.testnet \
-FINDER_ACCOUNT=nest-finder-2.testnet \
-STORE_ACCOUNT=nest-store-2.testnet \
-IDENTIFIER_WHITELIST_ACCOUNT=nest-whitelist-1.testnet \
-REGISTRY_ACCOUNT=nest-registry-2.testnet \
-SLASHING_ACCOUNT=nest-slashing-2.testnet \
-VOTING_ACCOUNT=nest-voting-4.testnet \
-ORACLE_ACCOUNT=nest-oracle-6.testnet \
+OWNER_ACCOUNT=nest-owner-3.testnet \
+TREASURY_ACCOUNT=nest-treasury-3.testnet \
+TOKEN_ACCOUNT=nest-token-3.testnet \
+FINDER_ACCOUNT=nest-finder-3.testnet \
+STORE_ACCOUNT=nest-store-3.testnet \
+IDENTIFIER_WHITELIST_ACCOUNT=nest-whitelist-2.testnet \
+REGISTRY_ACCOUNT=nest-registry-3.testnet \
+SLASHING_ACCOUNT=nest-slashing-3.testnet \
+VOTING_ACCOUNT=nest-voting-5.testnet \
+ORACLE_ACCOUNT=nest-oracle-7.testnet \
 DEPLOY_MOCK_COLLATERAL=y \
 MOCK_COLLATERAL_ACCOUNT=mocknear-1.testnet \
-MOCK_COLLATERAL_OWNER=nest-owner-2.testnet \
+MOCK_COLLATERAL_OWNER=nest-owner-3.testnet \
 MOCK_COLLATERAL_TOTAL_SUPPLY=1000000000000000000000000000 \
 MOCK_COLLATERAL_TRANSFER_RESTRICTED=false \
 COMMIT_DURATION_NS=120000000000 \
@@ -96,7 +98,6 @@ Required env vars:
 OWNER_ACCOUNT
 TREASURY_ACCOUNT
 TOKEN_ACCOUNT
-VAULT_ACCOUNT
 FINDER_ACCOUNT
 STORE_ACCOUNT
 IDENTIFIER_WHITELIST_ACCOUNT
@@ -114,7 +115,7 @@ CREATE_SLEEP_SECONDS=15
 CREATE_RETRIES=3
 COLLATERAL_TOKEN=wrap.testnet
 
-FINAL_FEE=100000000000000000000000
+FINAL_FEE=100000
 ORACLE_LIVENESS_NS=7200000000000
 BURNED_BOND_PERCENTAGE=500000000000000000
 SLASHING_RATE_BPS=1000
@@ -130,7 +131,16 @@ MOCK_COLLATERAL_ACCOUNT=
 MOCK_COLLATERAL_OWNER=<defaults to OWNER_ACCOUNT>
 MOCK_COLLATERAL_TOTAL_SUPPLY=1000000000000000000000000000
 MOCK_COLLATERAL_TRANSFER_RESTRICTED=false
+MINT_OPERATOR_ACCOUNT=<defaults to OWNER_ACCOUNT>
+MINT_RECIPIENTS=
+MINT_AMOUNT=0
 ```
+
+If `COLLATERAL_TOKEN=nusd-1.testnet`, register storage on `nusd-1.testnet` for:
+- `ORACLE_ACCOUNT` (the deploy script already does this)
+- Any asserter account that posts bond
+- Any disputer account that posts matching bond
+- Any account that may receive settlement payouts/refunds (typically asserter/disputer)
 
 ### test-market-dvm-flow.js
 
@@ -160,10 +170,10 @@ Required env vars for this script:
 NETWORK=testnet-fastnear
 MARKET_CONTRACT=market5-260214.nest-creator-260214a.testnet
 ORACLE_CONTRACT=oracle5-260214.nest-creator-260214a.testnet
-VOTING_CONTRACT=nest-voting-3.testnet
+VOTING_CONTRACT=nest-voting-5.testnet
 OUTCOME_TOKEN_CONTRACT=outcome5-260214.nest-creator-260214a.testnet
 USDC_CONTRACT=nusd-1.testnet
-VOTING_TOKEN_CONTRACT=nest-token-1.testnet
+VOTING_TOKEN_CONTRACT=nest-token-3.testnet
 
 CREATOR_ACCOUNT=...
 TRADER_YES_ACCOUNT=...
@@ -294,8 +304,8 @@ node settle-assertion.js '[1,2,3,4,...,32]'
 | Contract | Address |
 |----------|---------|
 | Oracle | `oracle5-260214.nest-creator-260214a.testnet` |
-| Token | `nest-token-1.testnet` |
-| Voting | `nest-voting-3.testnet` |
+| Token | `nest-token-3.testnet` |
+| Voting | `nest-voting-5.testnet` |
 | Market | `market5-260214.nest-creator-260214a.testnet` |
 | Outcome Token | `outcome5-260214.nest-creator-260214a.testnet` |
 | USDC | `nusd-1.testnet` |

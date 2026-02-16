@@ -35,9 +35,9 @@ const CONFIG = {
   helperUrl: 'https://helper.testnet.near.org',
 
   // Contract addresses
-  oracleContract: process.env.ORACLE_CONTRACT || 'nest-oracle-3.testnet',
-  tokenContract: process.env.TOKEN_CONTRACT || 'nest-token-1.testnet',
-  votingContract: process.env.VOTING_CONTRACT || 'nest-voting-1.testnet',
+  oracleContract: process.env.ORACLE_CONTRACT || 'nest-oracle-7.testnet',
+  tokenContract: process.env.TOKEN_CONTRACT || 'nest-token-3.testnet',
+  votingContract: process.env.VOTING_CONTRACT || 'nest-voting-5.testnet',
 
   // Test account
   accountId: process.env.NEAR_ACCOUNT_ID,

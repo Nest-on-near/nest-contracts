@@ -1,6 +1,28 @@
 # Nest - Optimistic Oracle for NEAR
 
-An optimistic oracle implementation for NEAR Protocol, inspired by UMA's Optimistic Oracle V3.
+An optimistic oracle and dispute-resolution system for NEAR.
+
+This repository contains the onchain contracts that power Nest: the Optimistic Oracle, voting/DVM stack, economic/security modules, and optional escalation policies.
+
+For dApp builders integrating Nest into their own protocols, see **[Usage.md](Usage.md)**.
+
+## What Problem This Repo Solves
+
+Smart contracts need a reliable way to resolve truth about claims that are not directly available onchain. This repo provides the protocol layer for that:
+
+- optimistic assertions with bonded accountability,
+- a challenge window for disputes,
+- token-weighted voting and deterministic settlement rules for contested claims.
+
+This is the trust and settlement backbone used by the UI and indexers in the Nest stack.
+
+## Repository Structure
+
+- `contracts/optimistic-oracle`: core assertion, dispute, and settlement contract.
+- `contracts/dvm/*`: voting token, voting, vault, finder, registry, store, whitelist, and slashing modules.
+- `contracts/escalation-manager/*`: optional policy modules for custom escalation behavior.
+- `contracts/examples/*`: integration examples.
+- `scripts/`: deployment and operational scripts.
 
 ## Architecture
 
@@ -144,9 +166,6 @@ Each contract has its own README with detailed deployment commands.
 ## Building
 
 ```bash
-# Build a single contract
-cd contracts/optimistic-oracle && cargo near build non-reproducible-wasm
-
 # Build all DVM contracts
 for contract in voting-token vault finder store identifier-whitelist registry slashing-library voting; do
   (cd contracts/dvm/$contract && cargo near build non-reproducible-wasm)
@@ -179,24 +198,26 @@ cargo test -p optimistic-oracle
 
 ## Deployment Guide
 
+Use this section when deploying a full Nest testnet stack from scratch. If you only want to interact with existing deployments, use the addresses in the table below and skip to consumer repos (`nest-ui`, `nest-indexer`).
+
 ### Current Testnet Deployment
 
 The following contracts are currently deployed on NEAR testnet:
 
 | Contract | Address |
 |----------|---------|
-| Voting Token (NEST) | `nest-token-2.testnet` |
+| Voting Token (NEST) | `nest-token-3.testnet` |
 | Vault | `nest-vault-2.testnet` |
 | Collateral Token (mockNEAR) | `mocknear-1.testnet` |
-| Finder | `nest-finder-2.testnet` |
-| Store | `nest-store-2.testnet` |
-| Identifier Whitelist | `nest-whitelist-1.testnet` |
-| Registry | `nest-registry-2.testnet` |
-| Slashing Library | `nest-slashing-2.testnet` |
-| Voting | `nest-voting-4.testnet` |
-| Optimistic Oracle | `nest-oracle-6.testnet` |
-| **Owner** | `nest-owner-2.testnet` |
-| **Treasury** | `nest-treasury-2.testnet` |
+| Finder | `nest-finder-3.testnet` |
+| Store | `nest-store-3.testnet` |
+| Identifier Whitelist | `nest-whitelist-2.testnet` |
+| Registry | `nest-registry-3.testnet` |
+| Slashing Library | `nest-slashing-3.testnet` |
+| Voting | `nest-voting-5.testnet` |
+| Optimistic Oracle | `nest-oracle-7.testnet` |
+| **Owner** | `nest-owner-3.testnet` |
+| **Treasury** | `nest-treasury-3.testnet` |
 
 ### Quick Start (Testnet)
 

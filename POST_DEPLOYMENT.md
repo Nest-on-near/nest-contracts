@@ -3,26 +3,26 @@
 After deploying all contracts, complete these configuration steps in order.
 
 > Note:
-> The command snippets below use older sample account IDs (`*-1.testnet` / `nest-oracle-3.testnet`) as placeholders.
-> For the current deployment use your actual IDs (for example: `nest-*-2.testnet`, `nest-voting-4.testnet`, `nest-oracle-6.testnet`, `mocknear-1.testnet`),
+> The command snippets below use older sample account IDs (`*-1.testnet` / `nest-oracle-7.testnet`) as placeholders.
+> For the current deployment use your actual IDs (for example: `nest-*-2.testnet`, `nest-voting-5.testnet`, `nest-oracle-7.testnet`, `mocknear-1.testnet`),
 > or run `scripts/deploy-testnet.sh` for end-to-end automated wiring.
 
 ## Deployed Addresses
 
 | Contract | Address |
 |----------|---------|
-| Voting Token (NEST) | `nest-token-2.testnet` |
+| Voting Token (NEST) | `nest-token-3.testnet` |
 | Vault | `nest-vault-2.testnet` |
 | Collateral Token (mockNEAR) | `mocknear-1.testnet` |
-| Finder | `nest-finder-2.testnet` |
-| Store | `nest-store-2.testnet` |
-| Identifier Whitelist | `nest-whitelist-1.testnet` |
-| Registry | `nest-registry-2.testnet` |
-| Slashing Library | `nest-slashing-2.testnet` |
-| Voting | `nest-voting-4.testnet` |
-| Optimistic Oracle | `nest-oracle-6.testnet` |
-| **Owner** | `nest-owner-2.testnet` |
-| **Treasury** | `nest-treasury-2.testnet` |
+| Finder | `nest-finder-3.testnet` |
+| Store | `nest-store-3.testnet` |
+| Identifier Whitelist | `nest-whitelist-2.testnet` |
+| Registry | `nest-registry-3.testnet` |
+| Slashing Library | `nest-slashing-3.testnet` |
+| Voting | `nest-voting-5.testnet` |
+| Optimistic Oracle | `nest-oracle-7.testnet` |
+| **Owner** | `nest-owner-3.testnet` |
+| **Treasury** | `nest-treasury-3.testnet` |
 
 ---
 
@@ -35,11 +35,11 @@ Deploy `vault` and initialize with collateral and NEST token contracts:
 cargo near deploy build-non-reproducible-wasm nest-vault-1.testnet
 
 near contract call-function as-transaction nest-vault-1.testnet new json-args '{
-  "owner": "nest-owner-1.testnet",
+  "owner": "nest-owner-3.testnet",
   "collateral_token": "wrap.testnet",
-  "nest_token": "nest-token-1.testnet",
-  "emergency_recipient": "nest-treasury-1.testnet"
-}' prepaid-gas '80 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+  "nest_token": "nest-token-3.testnet",
+  "emergency_recipient": "nest-treasury-3.testnet"
+}' prepaid-gas '80 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 ---
@@ -50,21 +50,21 @@ Grant vault mint/burn authority and enable protocol transfer routes:
 
 ```bash
 # Set vault authority (grants minter + burner + transfer router)
-near contract call-function as-transaction nest-token-1.testnet set_vault_account json-args '{
+near contract call-function as-transaction nest-token-3.testnet set_vault_account json-args '{
   "vault_account": "nest-vault-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Allow voting staking/reward route
-near contract call-function as-transaction nest-token-1.testnet add_transfer_router json-args '{
-  "account_id": "nest-voting-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-3.testnet add_transfer_router json-args '{
+  "account_id": "nest-voting-5.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-token-1.testnet get_vault_account json-args '{}' network-config testnet now
-near contract call-function as-read-only nest-token-1.testnet is_transfer_router json-args '{"account_id":"nest-voting-1.testnet"}' network-config testnet now
-near contract call-function as-read-only nest-token-1.testnet get_transfer_restricted json-args '{}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet get_vault_account json-args '{}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet is_transfer_router json-args '{"account_id":"nest-voting-5.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet get_transfer_restricted json-args '{}' network-config testnet now
 ```
 
 ---
@@ -75,12 +75,12 @@ Register required accounts on both NEST and collateral token contracts:
 
 ```bash
 # On NEST token: register vault, voting, treasury and expected users
-near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
-near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-voting-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
-near contract call-function as-transaction nest-token-1.testnet storage_deposit json-args '{"account_id":"nest-treasury-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-3.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-3.testnet storage_deposit json-args '{"account_id":"nest-voting-5.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-token-3.testnet storage_deposit json-args '{"account_id":"nest-treasury-3.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # On collateral token: register vault and users that will redeem
-near contract call-function as-transaction wrap.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction wrap.testnet storage_deposit json-args '{"account_id":"nest-vault-1.testnet","registration_only":true}' prepaid-gas '30 Tgas' attached-deposit '0.01 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 ---
@@ -91,49 +91,49 @@ Register all DVM contracts with the Finder:
 
 ```bash
 # Register Vault
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "Vault",
   "implementation_address": "nest-vault-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 Then register the rest:
 
 ```bash
 # Register Store
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "Store",
-  "implementation_address": "nest-store-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+  "implementation_address": "nest-store-3.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Register Registry
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "Registry",
-  "implementation_address": "nest-registry-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+  "implementation_address": "nest-registry-3.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Register IdentifierWhitelist
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "IdentifierWhitelist",
   "implementation_address": "nest-identifiers-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Register SlashingLibrary
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "SlashingLibrary",
-  "implementation_address": "nest-slashing-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+  "implementation_address": "nest-slashing-3.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Register Voting
-near contract call-function as-transaction nest-finder-1.testnet change_implementation_address json-args '{
+near contract call-function as-transaction nest-finder-3.testnet change_implementation_address json-args '{
   "interface_name": "Voting",
-  "implementation_address": "nest-voting-1.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+  "implementation_address": "nest-voting-5.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-finder-1.testnet get_implementation_address json-args '{
+near contract call-function as-read-only nest-finder-3.testnet get_implementation_address json-args '{
   "interface_name": "Store"
 }' network-config testnet now
 ```
@@ -148,12 +148,12 @@ Add approved identifiers to the whitelist:
 # Whitelist ASSERT_TRUTH (default identifier)
 near contract call-function as-transaction nest-identifiers-1.testnet add_supported_identifier json-args '{
   "identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 
 # Whitelist YES_OR_NO_QUERY
 near contract call-function as-transaction nest-identifiers-1.testnet add_supported_identifier json-args '{
   "identifier": [89,69,83,95,79,82,95,78,79,95,81,85,69,82,89,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
@@ -171,15 +171,15 @@ Configure final fees for bond currencies:
 
 ```bash
 # Set final fee for wNEAR (0.1 NEAR = 100000000000000000000000)
-near contract call-function as-transaction nest-store-1.testnet set_final_fee json-args '{
+near contract call-function as-transaction nest-store-3.testnet set_final_fee json-args '{
   "currency": "wrap.testnet",
   "fee": "100000000000000000000000"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-store-1.testnet get_final_fee json-args '{
+near contract call-function as-read-only nest-store-3.testnet get_final_fee json-args '{
   "currency": "wrap.testnet"
 }' network-config testnet now
 ```
@@ -192,20 +192,20 @@ Whitelist bond tokens in the Optimistic Oracle:
 
 ```bash
 # Whitelist wNEAR with final fee of 0.1 NEAR
-near contract call-function as-transaction nest-oracle-3.testnet whitelist_currency json-args '{
+near contract call-function as-transaction nest-oracle-7.testnet whitelist_currency json-args '{
   "currency": "wrap.testnet",
   "final_fee": "100000000000000000000000"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-oracle-3.testnet is_currency_whitelisted json-args '{
+near contract call-function as-read-only nest-oracle-7.testnet is_currency_whitelisted json-args '{
   "currency": "wrap.testnet"
 }' network-config testnet now
 
 # Check minimum bond required
-near contract call-function as-read-only nest-oracle-3.testnet get_minimum_bond json-args '{
+near contract call-function as-read-only nest-oracle-7.testnet get_minimum_bond json-args '{
   "currency": "wrap.testnet"
 }' network-config testnet now
 ```
@@ -217,14 +217,14 @@ near contract call-function as-read-only nest-oracle-3.testnet get_minimum_bond 
 Whitelist the default identifier (should be done during deployment, but verify):
 
 ```bash
-near contract call-function as-transaction nest-oracle-3.testnet whitelist_identifier json-args '{
+near contract call-function as-transaction nest-oracle-7.testnet whitelist_identifier json-args '{
   "identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-oracle-3.testnet is_identifier_supported json-args '{
+near contract call-function as-read-only nest-oracle-7.testnet is_identifier_supported json-args '{
   "identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
 }' network-config testnet now
 ```
@@ -236,15 +236,15 @@ near contract call-function as-read-only nest-oracle-3.testnet is_identifier_sup
 Allow the Oracle to make price requests to the DVM:
 
 ```bash
-near contract call-function as-transaction nest-registry-1.testnet register_contract json-args '{
-  "contract_address": "nest-oracle-3.testnet"
-}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-1.testnet network-config testnet sign-with-keychain send
+near contract call-function as-transaction nest-registry-3.testnet register_contract json-args '{
+  "contract_address": "nest-oracle-7.testnet"
+}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as nest-owner-3.testnet network-config testnet sign-with-keychain send
 ```
 
 **Verify:**
 ```bash
-near contract call-function as-read-only nest-registry-1.testnet is_contract_registered json-args '{
-  "contract_address": "nest-oracle-3.testnet"
+near contract call-function as-read-only nest-registry-3.testnet is_contract_registered json-args '{
+  "contract_address": "nest-oracle-7.testnet"
 }' network-config testnet now
 ```
 
@@ -260,24 +260,24 @@ Run all verification commands to ensure everything is configured correctly:
 
 ```bash
 # Check vault mint/burn permissions
-near contract call-function as-read-only nest-token-1.testnet is_minter json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
-near contract call-function as-read-only nest-token-1.testnet is_burner json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet is_minter json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet is_burner json-args '{"account_id": "nest-vault-1.testnet"}' network-config testnet now
 
 # Check vault is wired
-near contract call-function as-read-only nest-token-1.testnet get_vault_account json-args '{}' network-config testnet now
+near contract call-function as-read-only nest-token-3.testnet get_vault_account json-args '{}' network-config testnet now
 near contract call-function as-read-only nest-vault-1.testnet get_invariant_diagnostics json-args '{}' network-config testnet now
 
 # Check Finder has Store registered
-near contract call-function as-read-only nest-finder-1.testnet get_implementation_address json-args '{"interface_name": "Store"}' network-config testnet now
+near contract call-function as-read-only nest-finder-3.testnet get_implementation_address json-args '{"interface_name": "Store"}' network-config testnet now
 
 # Check identifier is whitelisted
 near contract call-function as-read-only nest-identifiers-1.testnet is_identifier_supported json-args '{"identifier": [65,83,83,69,82,84,95,84,82,85,84,72,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}' network-config testnet now
 
 # Check currency is whitelisted in Oracle
-near contract call-function as-read-only nest-oracle-3.testnet is_currency_whitelisted json-args '{"currency": "wrap.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-oracle-7.testnet is_currency_whitelisted json-args '{"currency": "wrap.testnet"}' network-config testnet now
 
 # Check Oracle is registered
-near contract call-function as-read-only nest-registry-1.testnet is_contract_registered json-args '{"contract_address": "nest-oracle-3.testnet"}' network-config testnet now
+near contract call-function as-read-only nest-registry-3.testnet is_contract_registered json-args '{"contract_address": "nest-oracle-7.testnet"}' network-config testnet now
 ```
 
 All commands should return `true` or the expected address.

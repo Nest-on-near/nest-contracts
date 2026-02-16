@@ -324,6 +324,17 @@ impl NestOptimisticOracle {
         self.voting_contract = Some(voting_contract);
     }
 
+    /// Transfer oracle ownership to a new account.
+    pub fn set_owner(&mut self, new_owner: AccountId) {
+        self.assert_owner();
+        self.owner = new_owner;
+    }
+
+    /// Get current oracle owner.
+    pub fn get_owner(&self) -> AccountId {
+        self.owner.clone()
+    }
+
     /// Emergency token withdrawal for stuck funds recovery.
     /// Owner-only: can move bonded funds, so use only for controlled recovery.
     pub fn emergency_withdraw_token(
