@@ -86,6 +86,46 @@ pub enum Event<'a> {
         settle_caller: &'a AccountId,
     },
 
+    /// Emitted when settlement enters async payout phase.
+    AssertionSettlementPending {
+        /// Assertion entering pending settlement.
+        assertion_id: &'a Bytes32,
+        /// True if the assertion was disputed.
+        disputed: bool,
+        /// Resolution that will be finalized if payout succeeds.
+        settlement_resolution: bool,
+        /// Intended payout recipient for this settlement attempt.
+        payout_recipient: &'a AccountId,
+        /// Intended payout amount for this settlement attempt.
+        payout_amount: &'a U128,
+        /// Account that initiated settlement.
+        settle_caller: &'a AccountId,
+    },
+
+    /// Emitted when settlement payout callback fails and assertion remains pending.
+    AssertionSettlementPayoutFailed {
+        /// Assertion whose payout callback failed.
+        assertion_id: &'a Bytes32,
+        /// True if the assertion was disputed.
+        disputed: bool,
+        /// Resolution that remains pending.
+        settlement_resolution: bool,
+        /// Intended payout recipient for failed attempt.
+        payout_recipient: &'a AccountId,
+        /// Intended payout amount for failed attempt.
+        payout_amount: &'a U128,
+    },
+
+    /// Emitted when a retry of settlement payout is requested.
+    AssertionSettlementRetryRequested {
+        /// Assertion being retried.
+        assertion_id: &'a Bytes32,
+        /// Resolution that remains pending.
+        settlement_resolution: bool,
+        /// Account that requested the retry.
+        caller: &'a AccountId,
+    },
+
     /// Emitted when the contract owner updates administrative properties.
     ///
     /// These properties affect default values for new assertions.

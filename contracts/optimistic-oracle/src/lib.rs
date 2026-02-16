@@ -321,6 +321,43 @@ impl NestOptimisticOracle {
         self.voting_contract = Some(voting_contract);
     }
 
+    /// Emergency token withdrawal for stuck funds recovery.
+    /// Owner-only: can move bonded funds, so use only for controlled recovery.
+    pub fn emergency_withdraw_token(
+        &mut self,
+        token: AccountId,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> Promise {
+        self.assert_owner();
+        require!(amount.0 > 0, "Amount must be positive");
+
+        Promise::new(token).function_call(
+            "ft_transfer".to_string(),
+            near_sdk::serde_json::json!({
+                "receiver_id": receiver_id,
+                "amount": amount,
+            })
+            .to_string()
+            .into_bytes(),
+            NearToken::from_yoctonear(1),
+            GAS_FOR_FT_TRANSFER,
+        )
+    }
+
+    /// Emergency native NEAR withdrawal for stuck balance recovery.
+    /// Owner-only.
+    pub fn emergency_withdraw_near(&mut self, receiver_id: AccountId, amount: U128) -> Promise {
+        self.assert_owner();
+        require!(amount.0 > 0, "Amount must be positive");
+        require!(
+            env::account_balance() >= NearToken::from_yoctonear(amount.0),
+            "Insufficient balance"
+        );
+
+        Promise::new(receiver_id).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
     // ========================================================================
     // NEP-141 Receiver (for bonding)
     // ========================================================================
@@ -445,9 +482,12 @@ impl NestOptimisticOracle {
             asserter: asserter.clone(),
             assertion_time_ns: time,
             settled: false,
+            settlement_pending: false,
+            settlement_in_flight: false,
             currency: currency.clone(),
             expiration_time_ns: time + liveness,
             settlement_resolution: false,
+            pending_settlement_resolution: false,
             domain_id,
             identifier,
             bond: U128(bond),
@@ -499,7 +539,10 @@ impl NestOptimisticOracle {
             "Assertion is expired"
         );
         require!(assertion.currency == currency, "Wrong currency for dispute");
-        require!(bond_amount >= assertion.bond.0, "Dispute bond too low");
+        require!(
+            bond_amount == assertion.bond.0,
+            "Dispute bond must match assertion bond"
+        );
 
         // Store the identifier before we release the borrow
         let identifier = assertion.identifier;
@@ -596,6 +639,10 @@ impl NestOptimisticOracle {
             .clone();
 
         require!(!assertion.settled, "Assertion already settled");
+        require!(
+            !assertion.settlement_pending,
+            "Settlement already pending payout callback"
+        );
 
         if assertion.disputer.is_none() {
             // No dispute - settle in favor of asserter
@@ -604,36 +651,7 @@ impl NestOptimisticOracle {
                 "Assertion not expired"
             );
 
-            // Update assertion state
-            let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
-            assertion_mut.settled = true;
-            assertion_mut.settlement_resolution = true;
-
-            // Transfer bond back to asserter
-            let _ = self.transfer_tokens(
-                assertion.currency.clone(),
-                assertion.asserter.clone(),
-                assertion.bond.0,
-            );
-
-            // Callback if configured
-            if let Some(ref callback_recipient) = assertion.callback_recipient {
-                let _ = self.call_assertion_resolved_callback(
-                    callback_recipient.clone(),
-                    assertion_id,
-                    true,
-                );
-            }
-
-            // Emit event
-            Event::AssertionSettled {
-                assertion_id: &assertion_id,
-                bond_recipient: &assertion.asserter,
-                disputed: false,
-                settlement_resolution: true,
-                settle_caller: &env::predecessor_account_id(),
-            }
-            .emit();
+            let _ = self.start_settlement_payout(assertion_id, true);
         } else {
             // Disputed - check if DVM has resolved this
             let request_id = self.dispute_requests.get(&assertion_id)
@@ -683,7 +701,7 @@ impl NestOptimisticOracle {
             Ok(Some(price)) => {
                 // DVM has resolved - price >= NUMERICAL_TRUE means asserter wins
                 let resolution = price >= NUMERICAL_TRUE;
-                self.internal_settle_disputed_assertion(assertion_id, resolution);
+                let _ = self.start_settlement_payout(assertion_id, resolution);
             }
             Ok(None) => {
                 env::panic_str("DVM has not resolved this dispute yet");
@@ -725,6 +743,10 @@ impl NestOptimisticOracle {
             .expect("Assertion does not exist");
 
         require!(!assertion.settled, "Assertion already settled");
+        require!(
+            !assertion.settlement_pending,
+            "Settlement already pending payout callback"
+        );
         require!(assertion.disputer.is_some(), "Assertion not disputed");
 
         // Check if DVM has been used - if so, should use settle_assertion instead
@@ -732,15 +754,12 @@ impl NestOptimisticOracle {
             env::log_str("Warning: This dispute was escalated to DVM. Consider using settle_assertion instead.");
         }
 
-        self.internal_settle_disputed_assertion(assertion_id, resolution);
+        let _ = self.start_settlement_payout(assertion_id, resolution);
     }
 
-    /// Internal helper to settle a disputed assertion
-    fn internal_settle_disputed_assertion(
-        &mut self,
-        assertion_id: Bytes32,
-        resolution: bool, // true = asserter wins, false = disputer wins
-    ) {
+    /// Retry a failed settlement payout callback.
+    /// Can be called after a payout failure to re-attempt token transfer finalization.
+    pub fn retry_settlement_payout(&mut self, assertion_id: Bytes32) {
         let assertion = self
             .assertions
             .get(&assertion_id)
@@ -748,55 +767,188 @@ impl NestOptimisticOracle {
             .clone();
 
         require!(!assertion.settled, "Assertion already settled");
-        require!(assertion.disputer.is_some(), "Assertion not disputed");
-
-        let disputer = assertion.disputer.clone().unwrap();
-
-        // Update assertion state
-        let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
-        assertion_mut.settled = true;
-        assertion_mut.settlement_resolution = resolution;
-
-        // Calculate fee and bond distribution
-        let oracle_fee = (self.burned_bond_percentage * assertion.bond.0) / SCALE;
-        let bond_recipient_amount = assertion.bond.0 * 2 - oracle_fee;
-
-        let bond_recipient = if resolution {
-            assertion.asserter.clone()
-        } else {
-            disputer.clone()
-        };
-
-        // Transfer oracle fee to owner (in production, this goes to Store contract)
-        let _ = self.transfer_tokens(assertion.currency.clone(), self.owner.clone(), oracle_fee);
-
-        // Transfer remaining bonds to winner
-        let _ = self.transfer_tokens(
-            assertion.currency.clone(),
-            bond_recipient.clone(),
-            bond_recipient_amount,
+        require!(assertion.settlement_pending, "Settlement is not pending");
+        require!(
+            !assertion.settlement_in_flight,
+            "Settlement payout attempt already in-flight"
         );
 
-        // Callback if configured and not discarding oracle
-        if !assertion.escalation_manager_settings.discard_oracle {
-            if let Some(ref callback_recipient) = assertion.callback_recipient {
-                let _ = self.call_assertion_resolved_callback(
-                    callback_recipient.clone(),
-                    assertion_id,
-                    resolution,
-                );
-            }
-        }
+        let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
+        assertion_mut.settlement_in_flight = true;
 
-        // Emit event
-        Event::AssertionSettled {
+        Event::AssertionSettlementRetryRequested {
             assertion_id: &assertion_id,
-            bond_recipient: &bond_recipient,
-            disputed: true,
+            settlement_resolution: assertion.pending_settlement_resolution,
+            caller: &env::predecessor_account_id(),
+        }
+        .emit();
+
+        let _ = self.dispatch_settlement_payout(assertion_id, assertion.pending_settlement_resolution);
+    }
+
+    /// Internal helper to begin async settlement payout flow.
+    fn start_settlement_payout(
+        &mut self,
+        assertion_id: Bytes32,
+        resolution: bool, // true = asserter wins, false = disputer wins
+    ) -> Promise {
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
+            .expect("Assertion does not exist")
+            .clone();
+
+        require!(!assertion.settled, "Assertion already settled");
+        require!(
+            !assertion.settlement_pending,
+            "Settlement already pending payout callback"
+        );
+
+        let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
+        assertion_mut.settlement_pending = true;
+        assertion_mut.settlement_in_flight = true;
+        assertion_mut.pending_settlement_resolution = resolution;
+
+        let (payout_recipient, payout_amount, disputed, _) =
+            self.compute_settlement_payout(&assertion, resolution);
+        Event::AssertionSettlementPending {
+            assertion_id: &assertion_id,
+            disputed,
             settlement_resolution: resolution,
+            payout_recipient: &payout_recipient,
+            payout_amount: &U128(payout_amount),
             settle_caller: &env::predecessor_account_id(),
         }
         .emit();
+
+        self.dispatch_settlement_payout(assertion_id, resolution)
+    }
+
+    fn dispatch_settlement_payout(&self, assertion_id: Bytes32, resolution: bool) -> Promise {
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
+            .expect("Assertion does not exist")
+            .clone();
+
+        let (bond_recipient, bond_recipient_amount, disputed, oracle_fee) =
+            self.compute_settlement_payout(&assertion, resolution);
+
+        // Best-effort owner fee transfer; final settlement is gated on recipient payout callback.
+        if disputed && oracle_fee > 0 {
+            let _ = self.transfer_tokens(assertion.currency.clone(), self.owner.clone(), oracle_fee);
+        }
+
+        self.transfer_tokens(
+            assertion.currency.clone(),
+            bond_recipient,
+            bond_recipient_amount,
+        )
+        .then(
+            Promise::new(env::current_account_id()).function_call(
+                "on_settlement_payout_complete".to_string(),
+                near_sdk::serde_json::json!({
+                    "assertion_id": assertion_id,
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(0),
+                GAS_FOR_SETTLE_CALLBACK,
+            ),
+        )
+    }
+
+    fn compute_settlement_payout(
+        &self,
+        assertion: &Assertion,
+        resolution: bool,
+    ) -> (AccountId, u128, bool, u128) {
+        if let Some(disputer) = &assertion.disputer {
+            let oracle_fee = (self.burned_bond_percentage * assertion.bond.0) / SCALE;
+            let bond_recipient_amount = assertion.bond.0 * 2 - oracle_fee;
+            let bond_recipient = if resolution {
+                assertion.asserter.clone()
+            } else {
+                disputer.clone()
+            };
+            (bond_recipient, bond_recipient_amount, true, oracle_fee)
+        } else {
+            // Undisputed assertions always settle to the asserter.
+            (assertion.asserter.clone(), assertion.bond.0, false, 0)
+        }
+    }
+
+    #[private]
+    pub fn on_settlement_payout_complete(
+        &mut self,
+        assertion_id: Bytes32,
+        #[callback_result] payout_result: Result<(), PromiseError>,
+    ) {
+        let assertion = self
+            .assertions
+            .get(&assertion_id)
+            .expect("Assertion does not exist")
+            .clone();
+
+        require!(assertion.settlement_pending, "Settlement is not pending");
+        require!(
+            assertion.settlement_in_flight,
+            "Settlement payout not in-flight"
+        );
+
+        match payout_result {
+            Ok(()) => {
+                let resolution = assertion.pending_settlement_resolution;
+                let (bond_recipient, _, disputed, _) =
+                    self.compute_settlement_payout(&assertion, resolution);
+
+                let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
+                assertion_mut.settlement_in_flight = false;
+                assertion_mut.settlement_pending = false;
+                assertion_mut.settled = true;
+                assertion_mut.settlement_resolution = resolution;
+
+                if !assertion.escalation_manager_settings.discard_oracle {
+                    if let Some(ref callback_recipient) = assertion.callback_recipient {
+                        let _ = self.call_assertion_resolved_callback(
+                            callback_recipient.clone(),
+                            assertion_id,
+                            resolution,
+                        );
+                    }
+                }
+
+                Event::AssertionSettled {
+                    assertion_id: &assertion_id,
+                    bond_recipient: &bond_recipient,
+                    disputed,
+                    settlement_resolution: resolution,
+                    settle_caller: &env::predecessor_account_id(),
+                }
+                .emit();
+            }
+            Err(_) => {
+                let resolution = assertion.pending_settlement_resolution;
+                let (payout_recipient, payout_amount, disputed, _) =
+                    self.compute_settlement_payout(&assertion, resolution);
+                let assertion_mut = self.assertions.get_mut(&assertion_id).unwrap();
+                assertion_mut.settlement_in_flight = false;
+
+                Event::AssertionSettlementPayoutFailed {
+                    assertion_id: &assertion_id,
+                    disputed,
+                    settlement_resolution: resolution,
+                    payout_recipient: &payout_recipient,
+                    payout_amount: &U128(payout_amount),
+                }
+                .emit();
+
+                env::log_str(&format!(
+                    "Settlement payout failed for assertion {:?}; remains pending for retry",
+                    hex::encode(assertion_id)
+                ));
+            }
+        }
     }
 
     // ========================================================================
@@ -899,12 +1051,25 @@ impl NestOptimisticOracle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use near_sdk::AccountId;
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::testing_env;
 
     fn get_context(predecessor: AccountId) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
         builder.predecessor_account_id(predecessor);
+        builder
+    }
+
+    fn get_context_with_time(
+        predecessor: AccountId,
+        current_account: AccountId,
+        block_timestamp: u64,
+    ) -> VMContextBuilder {
+        let mut builder = VMContextBuilder::new();
+        builder.predecessor_account_id(predecessor);
+        builder.current_account_id(current_account);
+        builder.block_timestamp(block_timestamp);
         builder
     }
 
@@ -990,5 +1155,174 @@ mod tests {
         contract.set_voting_contract(voting.clone());
 
         assert_eq!(contract.get_voting_contract(), Some(voting));
+    }
+
+    #[test]
+    fn test_settlement_payout_success_finalizes_assertion() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let oracle: AccountId = "oracle.near".parse().unwrap();
+        let asserter: AccountId = "asserter.near".parse().unwrap();
+        let caller: AccountId = "caller.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+
+        testing_env!(get_context_with_time(owner.clone(), oracle.clone(), 1).build());
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
+        contract.whitelist_currency(currency.clone(), U128(1));
+
+        let assertion_id = contract.internal_assert_truth(
+            [1u8; 32],
+            asserter.clone(),
+            None,
+            None,
+            Some(1),
+            Some(0),
+            currency.clone(),
+            10,
+            None,
+            None,
+            None,
+            caller,
+        );
+
+        testing_env!(get_context_with_time(asserter.clone(), oracle.clone(), 5).build());
+        contract.settle_assertion(assertion_id);
+
+        let pending = contract.get_assertion(assertion_id).unwrap();
+        assert!(!pending.settled);
+        assert!(pending.settlement_pending);
+        assert!(pending.settlement_in_flight);
+
+        testing_env!(get_context_with_time(oracle.clone(), oracle.clone(), 6).build());
+        contract.on_settlement_payout_complete(assertion_id, Ok(()));
+
+        let finalized = contract.get_assertion(assertion_id).unwrap();
+        assert!(finalized.settled);
+        assert!(!finalized.settlement_pending);
+        assert!(!finalized.settlement_in_flight);
+        assert!(finalized.settlement_resolution);
+    }
+
+    #[test]
+    fn test_settlement_payout_failure_stays_pending_and_retryable() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let oracle: AccountId = "oracle.near".parse().unwrap();
+        let asserter: AccountId = "asserter.near".parse().unwrap();
+        let caller: AccountId = "caller.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+
+        testing_env!(get_context_with_time(owner.clone(), oracle.clone(), 1).build());
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
+        contract.whitelist_currency(currency.clone(), U128(1));
+
+        let assertion_id = contract.internal_assert_truth(
+            [2u8; 32],
+            asserter.clone(),
+            None,
+            None,
+            Some(1),
+            Some(0),
+            currency.clone(),
+            10,
+            None,
+            None,
+            None,
+            caller,
+        );
+
+        testing_env!(get_context_with_time(asserter.clone(), oracle.clone(), 5).build());
+        contract.settle_assertion(assertion_id);
+
+        testing_env!(get_context_with_time(oracle.clone(), oracle.clone(), 6).build());
+        contract.on_settlement_payout_complete(assertion_id, Err(PromiseError::Failed));
+
+        let failed = contract.get_assertion(assertion_id).unwrap();
+        assert!(!failed.settled);
+        assert!(failed.settlement_pending);
+        assert!(!failed.settlement_in_flight);
+
+        testing_env!(get_context_with_time(asserter, oracle, 7).build());
+        contract.retry_settlement_payout(assertion_id);
+
+        let retried = contract.get_assertion(assertion_id).unwrap();
+        assert!(retried.settlement_pending);
+        assert!(retried.settlement_in_flight);
+    }
+
+    #[test]
+    fn test_dispute_requires_exact_bond_amount() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let oracle: AccountId = "oracle.near".parse().unwrap();
+        let asserter: AccountId = "asserter.near".parse().unwrap();
+        let disputer: AccountId = "disputer.near".parse().unwrap();
+        let caller: AccountId = "caller.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+
+        testing_env!(get_context_with_time(owner.clone(), oracle.clone(), 1).build());
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
+        contract.whitelist_currency(currency.clone(), U128(1));
+
+        let assertion_id = contract.internal_assert_truth(
+            [3u8; 32],
+            asserter,
+            None,
+            None,
+            Some(100),
+            Some(0),
+            currency.clone(),
+            10,
+            None,
+            None,
+            None,
+            caller.clone(),
+        );
+
+        testing_env!(get_context_with_time(caller, oracle, 10).build());
+        contract.internal_dispute_assertion(
+            assertion_id,
+            disputer.clone(),
+            currency,
+            10,
+            disputer.clone(),
+        );
+
+        let assertion = contract.get_assertion(assertion_id).unwrap();
+        assert_eq!(assertion.disputer, Some(disputer));
+    }
+
+    #[test]
+    #[should_panic(expected = "Dispute bond must match assertion bond")]
+    fn test_dispute_rejects_overpayment_bond_amount() {
+        let owner: AccountId = "owner.near".parse().unwrap();
+        let oracle: AccountId = "oracle.near".parse().unwrap();
+        let asserter: AccountId = "asserter.near".parse().unwrap();
+        let disputer: AccountId = "disputer.near".parse().unwrap();
+        let caller: AccountId = "caller.near".parse().unwrap();
+        let currency: AccountId = "usdc.near".parse().unwrap();
+
+        testing_env!(get_context_with_time(owner.clone(), oracle.clone(), 1).build());
+        let mut contract =
+            NestOptimisticOracle::new(owner.clone(), currency.clone(), None, None, None);
+        contract.whitelist_currency(currency.clone(), U128(1));
+
+        let assertion_id = contract.internal_assert_truth(
+            [4u8; 32],
+            asserter,
+            None,
+            None,
+            Some(100),
+            Some(0),
+            currency.clone(),
+            10,
+            None,
+            None,
+            None,
+            caller.clone(),
+        );
+
+        testing_env!(get_context_with_time(caller, oracle, 10).build());
+        contract.internal_dispute_assertion(assertion_id, disputer.clone(), currency, 11, disputer);
     }
 }

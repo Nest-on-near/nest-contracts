@@ -31,6 +31,18 @@ pub enum RequestStatus {
     Resolved,
 }
 
+/// Outcome of attempting to resolve a request.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, PartialEq, Debug)]
+pub enum ResolvePriceOutcome {
+    /// Price successfully resolved for the request.
+    Resolved { price: i128 },
+    /// Participation was too low, reveal phase was extended.
+    RevealExtended,
+    /// Participation remained too low and manual emergency resolution is required.
+    EmergencyRequired,
+}
+
 /// A price request that needs to be resolved by voting
 #[near(serializers = [json, borsh])]
 #[derive(Clone)]
@@ -436,8 +448,8 @@ impl Voting {
     /// * `request_id` - The price request ID
     ///
     /// # Returns
-    /// The resolved price
-    pub fn resolve_price(&mut self, request_id: CryptoHash) -> i128 {
+    /// Outcome describing whether the request resolved or needs additional action.
+    pub fn resolve_price(&mut self, request_id: CryptoHash) -> ResolvePriceOutcome {
         let mut request = self
             .requests
             .get(&request_id)
@@ -479,7 +491,7 @@ impl Voting {
                     emergency_required: false,
                 }
                 .emit();
-                env::panic_str("Low participation: reveal phase extended");
+                return ResolvePriceOutcome::RevealExtended;
             }
             request.emergency_required = true;
             self.requests.insert(request_id, request);
@@ -491,7 +503,7 @@ impl Voting {
                 emergency_required: true,
             }
             .emit();
-            env::panic_str("Low participation: emergency resolution required");
+            return ResolvePriceOutcome::EmergencyRequired;
         }
 
         let commitments = self
@@ -533,7 +545,9 @@ impl Voting {
         }
         .emit();
 
-        resolved_price
+        ResolvePriceOutcome::Resolved {
+            price: resolved_price,
+        }
     }
 
     // ==================== View Functions ====================
@@ -1117,8 +1131,8 @@ mod tests {
             DEFAULT_COMMIT_DURATION + DEFAULT_REVEAL_DURATION + 10
         )
         .build());
-        let resolved = contract.resolve_price(request_id);
-        assert_eq!(resolved, 1);
+        let outcome = contract.resolve_price(request_id);
+        assert_eq!(outcome, ResolvePriceOutcome::Resolved { price: 1 });
         assert!(contract.has_price(request_id));
     }
 
@@ -1165,10 +1179,8 @@ mod tests {
             DEFAULT_COMMIT_DURATION + DEFAULT_REVEAL_DURATION + 10
         )
         .build());
-        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.resolve_price(request_id);
-        }));
-        assert!(failed.is_err());
+        let outcome = contract.resolve_price(request_id);
+        assert_eq!(outcome, ResolvePriceOutcome::EmergencyRequired);
         let req = contract.get_request(request_id).unwrap();
         assert!(req.emergency_required);
 

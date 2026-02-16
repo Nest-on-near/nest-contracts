@@ -52,6 +52,12 @@ pub struct Assertion {
     /// Whether the assertion has been settled.
     pub settled: bool,
 
+    /// Whether settlement is pending async payout completion.
+    pub settlement_pending: bool,
+
+    /// Whether a settlement payout attempt is currently in-flight.
+    pub settlement_in_flight: bool,
+
     /// NEP-141 token contract used for the bond.
     pub currency: AccountId,
 
@@ -61,6 +67,10 @@ pub struct Assertion {
     /// The final resolution: true if assertion was truthful, false otherwise.
     /// Only valid after `settled` is true.
     pub settlement_resolution: bool,
+
+    /// Pending resolution being finalized after payout callback succeeds.
+    /// Only meaningful while `settlement_pending` is true.
+    pub pending_settlement_resolution: bool,
 
     /// Domain identifier for grouping related assertions.
     pub domain_id: Bytes32,
